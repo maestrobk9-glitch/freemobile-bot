@@ -38,7 +38,6 @@ def view_vip_session(session_id):
 
         number = metadata.get("number", "غير معروف")
 
-        # صفحة وسيطة لحقن الجلسة وتوجيه المستخدم مباشرة للرقم المختار
         html_content = f"""
         <!DOCTYPE html>
         <html lang="ar" dir="rtl">
@@ -87,7 +86,6 @@ def evaluate_vip_expanded(num):
         return None
     d = clean[2:]
 
-    # مصفوفة الأنماط الدقيقة (مطابقة لمتطلباتك)
     if len(set(d)) <= 4: return "تنوع منخفض للأرقام (مميز)"
     if d == d[::-1]: return "مرآة متناظرة كاملة (Palindrome)"
     if d[:4] == d[4:]: return "نصفين متطابقين تماماً"
@@ -169,7 +167,6 @@ def run_smart_proxy_monitor():
                     )
                     page = context.new_page()
                     
-                    # محاكاة سلوك السكريبت في تدوير الجلسة وتنظيف الـ Cache
                     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
                     time.sleep(1.0)
 
@@ -198,9 +195,8 @@ def run_smart_proxy_monitor():
 
                                 vip_desc = evaluate_vip_expanded(num_val)
                                 if vip_desc:
-                                    print(files_log := f"🔥🔥🔥 VIP FOUND! الرقم: {num_val} | التصنيف: {vip_desc}", flush=True)
+                                    print(f"🔥🔥🔥 VIP FOUND! الرقم: {num_val} | التصنيف: {vip_desc}", flush=True)
                                     
-                                    # حقن واختيار الرقم تلقائياً في واجهة الموقع (DOM Selection)
                                     try:
                                         page.evaluate(f"""
                                             (targetNum) => {{
@@ -232,12 +228,16 @@ def run_smart_proxy_monitor():
                                         send_telegram_alert(num_val, vip_desc, session_id)
                                     break
                     
-                    browser.close()
-                except Exception as e:
                     if browser:
-                        try: browser.close() except: pass
+                        browser.close()
+                except Exception as e:
+                    print(f"⚠️ [LOOP ERROR]: {e}", flush=True)
+                    if browser:
+                        try:
+                            browser.close()
+                        except Exception:
+                            pass
 
-                # سرعة التدوير المستمر لجلب أرقام جديدة وجلسات نظيفة تماماً مثل السكريبت
                 time.sleep(random.uniform(2.5, 4.5))
     except Exception as e:
         print(f"❌ خطأ فادح في المحرك: {e}", flush=True)
