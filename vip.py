@@ -27,6 +27,8 @@ os.makedirs(SESSION_DIR, exist_ok=True)
 @app.route("/vip/<session_id>")
 def view_vip_session(session_id):
     meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
+    state_file = os.path.join(SESSION_DIR, f"{session_id}.json")
+    
     if not os.path.exists(meta_file):
         return "<h3>⚠️ هذه الجلسة غير موجودة أو انتهت صلاحيتها.</h3>", 404
 
@@ -36,6 +38,7 @@ def view_vip_session(session_id):
 
         number = metadata.get("number", "غير معروف")
 
+        # يمكنك الضغط على زر الذهاب لموقع Free وسيقوم بنقلك مباشرة للصفحة الرسمية
         return render_template_string("""
         <!DOCTYPE html>
         <html lang="ar" dir="rtl">
@@ -52,10 +55,10 @@ def view_vip_session(session_id):
         </head>
         <body>
             <div class="card">
-                <h1>🔥 تم العثور على جوهرة VIP!</h1>
-                <p>رقم الهاتف المميز المحفوظ في هذه الجلسة:</p>
+                <h1>🔥 تم رصد جوهرة VIP!</h1>
+                <p>رقم الهاتف المميز المرتبط بهذه الجلسة:</p>
                 <h2 style="color: #facc15; font-size: 32px;">{{ number }}</h2>
-                <p>تم حفظ ملفات الارتباط (Cookies) الخاصة بهذا الرقم بدقة.</p>
+                <p>تم حفظ ملفات الارتباط وبيانات الجلسة بدقة.</p>
                 <a href="https://mobile.free.fr/souscription/" class="btn" target="_blank">الذهاب لموقع Free لإتمام الحجز ➔</a>
             </div>
         </body>
@@ -152,8 +155,6 @@ def send_telegram_alert(number, desc, session_id):
 
 def run_smart_proxy_monitor():
     print("🚀 تشغيل محرك فحص أرقام FreeMobile VIP الصاروخي...", flush=True)
-    
-    # فرض مسار المتصفح المحلي الثابت لتجنب خطأ المسار على Render
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
     consecutive_empty = 0
 
