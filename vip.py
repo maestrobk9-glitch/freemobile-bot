@@ -38,7 +38,6 @@ def view_vip_session(session_id):
 
         number = metadata.get("number", "غير معروف")
 
-        # صفحة وسيطة ذكية تقوم بحقن الجلسة وتوجيهك فوراً لموقع Free Mobile مع الاحتفاظ بالرقم
         html_content = f"""
         <!DOCTYPE html>
         <html lang="ar" dir="rtl">
@@ -62,7 +61,6 @@ def view_vip_session(session_id):
                 <p>جاري نقلك مباشرة إلى موقع Free Mobile لتجد الرقم بانتظارك...</p>
             </div>
             <script>
-                // الانتقال التلقائي بعد ثانية واحدة لموقع Free Mobile
                 setTimeout(function() {{
                     window.location.href = "https://mobile.free.fr/souscription/";
                 }}, 1500);
@@ -72,7 +70,6 @@ def view_vip_session(session_id):
         """
         
         response = make_response(html_content)
-        # حفظ معرف الجلسة في الكوكيز لربط المتصفح
         response.set_cookie("vip_active_session", session_id, max_age=300)
         return response
 
@@ -198,6 +195,7 @@ def run_smart_proxy_monitor():
 
                     if numbers_data:
                         numbers_list = numbers_data if isinstance(numbers_data, list) else numbers_data.get("msisdns", [])
+                        print(f"📊 [فحص] عدد الأرقام المتاحة حالياً في الموقع: {len(numbers_list)}", flush=True)
                         if numbers_list:
                             for item in numbers_list:
                                 num_val = item.get("value") if isinstance(item, dict) else str(item)
@@ -211,6 +209,8 @@ def run_smart_proxy_monitor():
                                     if session_id:
                                         send_telegram_alert(num_val, vip_desc, session_id)
                                     break
+                    else:
+                        print("⚠️ [فحص] لم يتم استرجاع قائمة الأرقام في هذه المحاولة.", flush=True)
 
                     browser.close()
                 except Exception as e:
