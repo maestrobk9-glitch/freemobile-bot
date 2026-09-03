@@ -27,8 +27,6 @@ os.makedirs(SESSION_DIR, exist_ok=True)
 @app.route("/vip/<session_id>")
 def view_vip_session(session_id):
     meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
-    state_file = os.path.join(SESSION_DIR, f"{session_id}.json")
-    
     if not os.path.exists(meta_file):
         return "<h3>⚠️ هذه الجلسة غير موجودة أو انتهت صلاحيتها.</h3>", 404
 
@@ -38,7 +36,6 @@ def view_vip_session(session_id):
 
         number = metadata.get("number", "غير معروف")
 
-        # يمكنك الضغط على زر الذهاب لموقع Free وسيقوم بنقلك مباشرة للصفحة الرسمية
         return render_template_string("""
         <!DOCTYPE html>
         <html lang="ar" dir="rtl">
@@ -156,7 +153,6 @@ def send_telegram_alert(number, desc, session_id):
 def run_smart_proxy_monitor():
     print("🚀 تشغيل محرك فحص أرقام FreeMobile VIP الصاروخي...", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
-    consecutive_empty = 0
 
     try:
         with sync_playwright() as p:
@@ -166,31 +162,36 @@ def run_smart_proxy_monitor():
                 use_proxy = False
                 proxy_url = None
 
-                if consecutive_empty >= 2:
-                    try:
-                        res = requests.get(
-                            "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=2000&country=fr",
-                            timeout=3
-                        )
-                        proxies = [line.strip() for line in res.text.splitlines() if line.strip()]
-                        if proxies:
-                            proxy_url = "http://" + random.choice(proxies)
-                            use_proxy = True
-                    except:
-                        pass
+                # محاولة جلب بروكسي فرنسي متجدد لتغيير الـ IP في كل دورة
+                try:
+                    res = requests.get(
+                        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000&country=fr",
+                        timeout=4
+                    )
+                    proxies = [line.strip() for line in res.text.splitlines() if line.strip()]
+                    if proxies:
+                        proxy_url = "http://" + random.choice(proxies)
+                        use_proxy = True
+                except:
+                    pass
 
                 try:
                     browser_args = {}
                     if use_proxy and proxy_url:
                         browser_args["proxy"] = {"server": proxy_url}
+                        print(f"🔄 [PROXY] استخدام IP جديد: {proxy_url}", flush=True)
+                    else:
+                        print("🌐 [DIRECT] الاتصال مباشر بدون بروكسي", flush=True)
 
                     browser = p.chromium.launch(headless=True, **browser_args)
                     context = browser.new_context(
                         user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
                     )
                     page = context.new_page()
-                    page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=10000)
-                    time.sleep(1.0)
+                    
+                    # زيادة المهلة إلى 30 ثانية لتجاوز مشاكل البطء والاتصال
+                    page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
+                    time.sleep(1.5)
 
                     numbers_data = page.evaluate("""
                         async () => {
@@ -207,7 +208,6 @@ def run_smart_proxy_monitor():
                     if numbers_data:
                         numbers_list = numbers_data if isinstance(numbers_data, list) else numbers_data.get("msisdns", [])
                         if numbers_list:
-                            consecutive_empty = 0
                             vip_found = False
 
                             for item in numbers_list:
@@ -224,14 +224,9 @@ def run_smart_proxy_monitor():
                                     if session_id:
                                         send_telegram_alert(num_val, vip_desc, session_id)
                                     break
-                        else:
-                            consecutive_empty += 1
-                    else:
-                        consecutive_empty += 1
 
                     browser.close()
                 except Exception as e:
-                    consecutive_empty += 1
                     print(f"⚠️ [MONITOR LOOP ERROR]: {e}", flush=True)
                     if browser:
                         try:
@@ -239,7 +234,7 @@ def run_smart_proxy_monitor():
                         except:
                             pass
 
-                time.sleep(random.uniform(2.0, 3.5))
+                time.sleep(random.uniform(3.0, 5.0))
     except Exception as e:
         print(f"❌ [FATAL PLAYWRIGHT ERROR]: {e}", flush=True)
 
