@@ -152,6 +152,9 @@ def send_telegram_alert(number, desc, session_id):
 
 def run_smart_proxy_monitor():
     print("🚀 تشغيل محرك فحص أرقام FreeMobile VIP الصاروخي...", flush=True)
+    
+    # فرض مسار المتصفح المحلي الثابت لتجنب خطأ المسار على Render
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
     consecutive_empty = 0
 
     try:
