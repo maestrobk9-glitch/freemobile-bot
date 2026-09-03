@@ -38,6 +38,9 @@ def view_vip_session(session_id):
 
         number = metadata.get("number", "غير معروف")
 
+        with open(state_file, "r", encoding="utf-8") as sf:
+            state_data = json.load(sf)
+
         html_content = f"""
         <!DOCTYPE html>
         <html lang="ar" dir="rtl">
@@ -55,30 +58,34 @@ def view_vip_session(session_id):
         </head>
         <body>
             <div class="card">
-                <h1>🔥 تم تثبيت واختيار الرقم المميز!</h1>
+                <h1>🔥 جاري حقن الجلسة وتجهيز الرقم!</h1>
                 <div class="number">{number}</div>
                 <div class="loader"></div>
-                <p>جاري نقلك إلى موقع Free Mobile لتجد الرقم بانتظارك...</p>
+                <p>يرجى الانتظار ثواني ليتم فتح الموقع واختيار الرقم لك...</p>
             </div>
             <script>
+                const rawState = {json.dumps(state_data)};
+                if (rawState && rawState.cookies) {{
+                    rawState.cookies.forEach(c => {{
+                        document.cookie = `${{c.name}}=${{c.value}}; path=/; domain=.free.fr; max-age=3600`;
+                    }});
+                }}
+
                 setTimeout(function() {{
                     window.location.href = "https://mobile.free.fr/souscription/options";
-                }}, 1200);
+                }}, 1500);
             </script>
         </body>
         </html>
         """
-        
-        response = make_response(html_content)
-        response.set_cookie("vip_active_session", session_id, max_age=300)
-        return response
+        return html_content
 
     except Exception as e:
         return f"<h3>حدث خطأ أثناء تحميل الجلسة: {e}</h3>", 500
 
 @app.route("/")
 def home():
-    return "<h3>🚀 FreeMobile VIP Engine v79 يعمل بكفاءة عالية وبدون توقف!</h3>"
+    return "<h3>🚀 FreeMobile VIP Engine v78 يعمل في الخلفية بكفاءة عالية!</h3>"
 
 def evaluate_vip_expanded(num):
     clean = str(num).replace(" ", "").replace("-", "")
@@ -152,7 +159,7 @@ def send_telegram_alert(number, desc, session_id):
         print(f"⚠️ خطأ إرسال Telegram: {e}", flush=True)
 
 def run_smart_proxy_monitor():
-    print("🚀 بدء تشغيل محرك تدوير الجلسات وفحص الأرقام في الخلفية...", flush=True)
+    print("🚀 بدء تشغيل محرك تدوير الجلسات وفحص الأرقام...", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 
     try:
@@ -168,26 +175,6 @@ def run_smart_proxy_monitor():
                     page = context.new_page()
                     
                     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
-                    time.sleep(1.5)
-
-                    # تفعيل خيار "رقم جديد" تلقائياً
-                    page.evaluate("""
-                        () => {
-                            const labels = Array.from(document.querySelectorAll('label, div, span'));
-                            const newNumLabel = labels.find(el => el.textContent.includes('nouveau numéro'));
-                            if (newNumLabel) {
-                                newNumLabel.click();
-                            }
-                            const radios = document.querySelectorAll('input[type="radio"]');
-                            radios.forEach(r => {
-                                if (r.value && (r.value.includes('new') || r.value.includes('nouveau') || r.id.includes('new'))) {
-                                    r.click();
-                                    r.checked = true;
-                                    r.dispatchEvent(new Event('change', { bubbles: true }));
-                                }
-                            });
-                        }
-                    """)
                     time.sleep(1.0)
 
                     numbers_data = page.evaluate("""
@@ -220,6 +207,12 @@ def run_smart_proxy_monitor():
                                     try:
                                         page.evaluate(f"""
                                             (targetNum) => {{
+                                                const radioNew = document.querySelector('input[value*="new"], input[id*="new"], input[name*="numero"]');
+                                                if (radioNew) {{
+                                                    radioNew.click();
+                                                    radioNew.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                                }}
+                                                
                                                 const selects = document.querySelectorAll('select');
                                                 selects.forEach(sel => {{
                                                     for (let i = 0; i < sel.options.length; i++) {{
@@ -256,24 +249,19 @@ def run_smart_proxy_monitor():
     except Exception as e:
         print(f"❌ خطأ فادح في المحرك: {e}", flush=True)
 
-# تشغيل البوت ذاتياً لمنع النوم على Render
-def self_ping_worker():
-    render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://freemobile-bot.onrender.com")
-    while True:
-        try:
-            requests.get(render_url, timeout=10)
-        except:
-            pass
-        time.sleep(180) # كل 3 دقائق
+monitor_started = False
+monitor_lock = threading.Lock()
 
-# إطلاق المحرك فوراً عند تشغيل الملف وليس عند أول طلب زائر
+@app.before_request
+def trigger_background_monitor():
+    global monitor_started
+    with monitor_lock:
+        if not monitor_started:
+            monitor_started = True
+            t = threading.Thread(target=run_smart_proxy_monitor, daemon=True)
+            t.start()
+            print("[SYSTEM] تم إطلاق محرك الفحص في الخلفية بنجاح!", flush=True)
+
 if __name__ == "__main__":
-    t_monitor = threading.Thread(target=run_smart_proxy_monitor, daemon=True)
-    t_monitor.start()
-    print("[SYSTEM] تم بدء محرك فحص الأرقام فوراً مع إقلاع السيرفر!", flush=True)
-
-    t_ping = threading.Thread(target=self_ping_worker, daemon=True)
-    t_ping.start()
-
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
