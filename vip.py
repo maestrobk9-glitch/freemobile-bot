@@ -25,10 +25,7 @@ CHAT_ID = os.environ.get(
     ""
 )
 
-# رابط البروكسي لتغيير الـ IP (مثال: "http://user:pass@ip:port")
 PROXY_URL = os.environ.get("PROXY_URL", "")
-
-# رابط الـ API لتغيير الـ IP الخاص بمزود البروكسي (إن وجد)
 CHANGE_IP_API = os.environ.get("CHANGE_IP_API", "")
 
 TARGET_URL = "https://mobile.free.fr/souscription/options"
