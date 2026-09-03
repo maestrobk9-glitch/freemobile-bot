@@ -25,10 +25,10 @@ CHAT_ID = os.environ.get(
     ""
 )
 
-# رابط البروكسي المستخدم في المتصفح (مثال: http://user:pass@ip:port)
+# رابط البروكسي لتغيير الـ IP (مثال: "http://user:pass@ip:port")
 PROXY_URL = os.environ.get("PROXY_URL", "")
 
-# رابط الـ API الخاص بمزود البروكسي لتغيير الـ IP فوراً (إذا توفر لدى الشركة التي تشتري منها البروكسي)
+# رابط الـ API لتغيير الـ IP الخاص بمزود البروكسي (إن وجد)
 CHANGE_IP_API = os.environ.get("CHANGE_IP_API", "")
 
 TARGET_URL = "https://mobile.free.fr/souscription/options"
@@ -70,7 +70,7 @@ def home():
         <title>Free Mobile VIP</title>
     </head>
     <body style="background:#0f172a;color:white;font-family:Arial;text-align:center;padding:50px;">
-        <h2>🚀 FreeMobile VIP Engine يعمل مع تغيير الـ IP</h2>
+        <h2>🚀 FreeMobile VIP Engine يعمل بنجاح</h2>
     </body>
     </html>
     """
@@ -277,22 +277,21 @@ def send_telegram_alert(number, desc, session_id):
 
 
 def request_new_ip_from_proxy():
-    """وظيفة لتغيير الـ IP عبر الـ API الخاص بالبروكسي إذا كان متوفراً"""
     if CHANGE_IP_API:
         try:
             requests.get(CHANGE_IP_API, timeout=10)
-            print("🔄 تم إرسال طلب تغيير الـ IP إلى مزود البروكسي بنجاح.", flush=True)
-            time.sleep(3) # الانتظار قليلاً حتى يتم تغيير الـ IP فعلياً
+            print("🔄 تم طلب IP جديد من مزود البروكسي بنجاح.", flush=True)
+            time.sleep(3)
         except Exception as e:
-            print(f"⚠️ فشل تغيير الـ IP عبر الـ API: {e}", flush=True)
+            print(f"⚠️ فشل تحديث الـ IP عبر الـ API: {e}", flush=True)
 
 
 # ============================================================
-# MONITOR WITH FORCED IP ROTATION
+# MONITOR LOOP
 # ============================================================
 
 def run_smart_proxy_monitor():
-    print("🚀 بدء محرك الفحص مع نظام التغيير الاجباري للـ IP عند غياب الأرقام...", flush=True)
+    print("🚀 بدء محرك الفحص المتطور...", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 
     empty_scans_count = 0
@@ -305,9 +304,8 @@ def run_smart_proxy_monitor():
                 page = None
 
                 try:
-                    # إذا لم يتم العثور على أرقام لمدة مرتين، نقوم بطلب IP جديد ومسح الجلسة
                     if empty_scans_count >= 2:
-                        print("🔄 لم يتم العثور على أرقام، جاري تغيير الـ IP فوراً...", flush=True)
+                        print("🔄 لم يتم العثور على أرقام متكررة، جاري تغيير الـ IP...", flush=True)
                         request_new_ip_from_proxy()
                         empty_scans_count = 0
 
@@ -326,7 +324,7 @@ def run_smart_proxy_monitor():
                     )
                     page = context.new_page()
 
-                    print("🌐 فتح صفحة Free Mobile بالفحص الجديد...", flush=True)
+                    print("🌐 فتح صفحة Free Mobile...", flush=True)
                     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
                     time.sleep(4)
 
@@ -351,7 +349,7 @@ def run_smart_proxy_monitor():
                     """)
 
                     if not numbers_list:
-                        print("⚠️ الصفحة فارغة ولم يتم رصد أي أرقام، سيتم تغيير الـ IP في المرة القادمة...", flush=True)
+                        print("⚠️ لم يتم العثور على أرقام في الصفحة، سيتم تغيير الـ IP...", flush=True)
                         empty_scans_count += 1
                         time.sleep(4)
                         continue
@@ -425,7 +423,7 @@ def run_smart_proxy_monitor():
 
 
 # ============================================================
-# CLEAN SESSIONS & RUN APP
+# CLEANUP & START
 # ============================================================
 
 def cleanup_sessions():
