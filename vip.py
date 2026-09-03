@@ -151,7 +151,7 @@ def send_telegram_alert(number, desc, session_id):
         print(f"⚠️ خطأ Telegram: {e}", flush=True)
 
 def run_smart_proxy_monitor():
-    print("🚀 تشغيل محرك فحص أرقام FreeMobile VIP الصاروخي...", flush=True)
+    print("🚀 تشغيل محرك فحص أرقام FreeMobile VIP المستقر...", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 
     try:
@@ -159,37 +159,15 @@ def run_smart_proxy_monitor():
             print("✅ [PLAYWRIGHT] تم تفعيل محرك المتصفح بنجاح", flush=True)
             while True:
                 browser = None
-                use_proxy = False
-                proxy_url = None
-
-                # محاولة جلب بروكسي فرنسي متجدد لتغيير الـ IP في كل دورة
                 try:
-                    res = requests.get(
-                        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000&country=fr",
-                        timeout=4
-                    )
-                    proxies = [line.strip() for line in res.text.splitlines() if line.strip()]
-                    if proxies:
-                        proxy_url = "http://" + random.choice(proxies)
-                        use_proxy = True
-                except:
-                    pass
-
-                try:
-                    browser_args = {}
-                    if use_proxy and proxy_url:
-                        browser_args["proxy"] = {"server": proxy_url}
-                        print(f"🔄 [PROXY] استخدام IP جديد: {proxy_url}", flush=True)
-                    else:
-                        print("🌐 [DIRECT] الاتصال مباشر بدون بروكسي", flush=True)
-
-                    browser = p.chromium.launch(headless=True, **browser_args)
+                    print("🌐 [DIRECT] الاتصال بموقع Free Mobile مباشرة...", flush=True)
+                    browser = p.chromium.launch(headless=True)
                     context = browser.new_context(
                         user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
                     )
                     page = context.new_page()
                     
-                    # زيادة المهلة إلى 30 ثانية لتجاوز مشاكل البطء والاتصال
+                    # مهلة اتصال آمنة ومستقرة
                     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
                     time.sleep(1.5)
 
@@ -208,8 +186,6 @@ def run_smart_proxy_monitor():
                     if numbers_data:
                         numbers_list = numbers_data if isinstance(numbers_data, list) else numbers_data.get("msisdns", [])
                         if numbers_list:
-                            vip_found = False
-
                             for item in numbers_list:
                                 num_val = item.get("value") if isinstance(item, dict) else str(item)
                                 if not num_val:
@@ -217,9 +193,7 @@ def run_smart_proxy_monitor():
 
                                 vip_desc = evaluate_vip(num_val)
                                 if vip_desc:
-                                    vip_found = True
                                     print(f"🔥🔥🔥 VIP FOUND! الرقم: {num_val} | التصنيف: {vip_desc}", flush=True)
-
                                     session_id = save_vip_session(context, num_val)
                                     if session_id:
                                         send_telegram_alert(num_val, vip_desc, session_id)
@@ -234,7 +208,7 @@ def run_smart_proxy_monitor():
                         except:
                             pass
 
-                time.sleep(random.uniform(3.0, 5.0))
+                time.sleep(random.uniform(4.0, 7.0))
     except Exception as e:
         print(f"❌ [FATAL PLAYWRIGHT ERROR]: {e}", flush=True)
 
