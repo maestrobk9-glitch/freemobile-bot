@@ -50,7 +50,6 @@ MOBILE_UA = (
 # ============================================================
 
 ACTIVE_SESSIONS = {}
-
 ACTIVE_SESSIONS_LOCK = threading.Lock()
 
 
@@ -60,7 +59,6 @@ ACTIVE_SESSIONS_LOCK = threading.Lock()
 
 @app.route("/")
 def home():
-
     return """
     <!DOCTYPE html>
     <html lang="ar" dir="rtl">
@@ -70,7 +68,7 @@ def home():
         <title>Free Mobile VIP</title>
     </head>
     <body style="background:#0f172a;color:white;font-family:Arial;text-align:center;padding:50px;">
-        <h2>🚀 FreeMobile VIP Engine يعمل</h2>
+        <h2>🚀 FreeMobile VIP Engine يعمل بنجاح</h2>
     </body>
     </html>
     """
@@ -82,7 +80,6 @@ def home():
 
 @app.route("/vip/<session_id>")
 def view_vip_session(session_id):
-
     meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
     state_file = os.path.join(SESSION_DIR, f"{session_id}.json")
 
@@ -133,7 +130,6 @@ def view_vip_session(session_id):
 
 @app.route("/vip/<session_id>/open")
 def open_vip_session(session_id):
-
     meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
     state_file = os.path.join(SESSION_DIR, f"{session_id}.json")
 
@@ -156,7 +152,7 @@ def open_vip_session(session_id):
             context = browser.new_context(
                 storage_state=state_file,
                 user_agent=MOBILE_UA,
-                viewport={"width":390, "height":844},
+                viewport={"width": 390, "height": 844},
                 device_scale_factor=3,
                 is_mobile=True,
                 has_touch=True,
@@ -166,7 +162,13 @@ def open_vip_session(session_id):
             page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
 
             with ACTIVE_SESSIONS_LOCK:
-                ACTIVE_SESSIONS[session_id] = {"browser":browser, "context":context, "page":page, "number":number, "created":time.time()}
+                ACTIVE_SESSIONS[session_id] = {
+                    "browser": browser,
+                    "context": context,
+                    "page": page,
+                    "number": number,
+                    "created": time.time()
+                }
 
             return f"<h2>🔥 تم فتح جلسة Free Mobile</h2><h1 style='color:#facc15;direction:ltr;'>{number}</h1>"
     except Exception as e:
@@ -182,13 +184,23 @@ def evaluate_vip_expanded(num):
     if not (len(clean) == 10 and (clean.startswith("06") or clean.startswith("07"))):
         return None
     d = clean[2:]
-    if len(set(d)) <= 4: return "تنوع منخفض للأرقام"
-    if d == d[::-1]: return "مرآة متناظرة كاملة"
-    if d[:4] == d[4:]: return "نصفين متطابقين"
-    sequences = ["0123", "1234", "2345", "3456", "4567", "5678", "6789", "9876", "8765", "7654", "6543", "5432", "4321", "3210"]
-    if any(seq in d for seq in sequences): return "تسلسل أرقام متتالي"
-    if len(set(d[-4:])) <= 2 or len(set(d[:4])) <= 2: return "تكرار عالي في الأطراف"
-    if d[0] == d[1] == d[2] or d[-3] == d[-2] == d[-1]: return "ثلاثية متتالية"
+    if len(set(d)) <= 4:
+        return "تنوع منخفض للأرقام"
+    if d == d[::-1]:
+        return "مرآة متناظرة كاملة"
+    if d[:4] == d[4:]:
+        return "نصفين متطابقين"
+    sequences = [
+        "0123", "1234", "2345", "3456", "4567",
+        "5678", "6789", "9876", "8765", "7654",
+        "6543", "5432", "4321", "3210"
+    ]
+    if any(seq in d for seq in sequences):
+        return "تسلسل أرقام متتالي"
+    if len(set(d[-4:])) <= 2 or len(set(d[:4])) <= 2:
+        return "تكرار عالي في الأطراف"
+    if d[0] == d[1] == d[2] or d[-3] == d[-2] == d[-1]:
+        return "ثلاثية متتالية"
     return None
 
 
@@ -213,6 +225,7 @@ def select_number(page, number):
         pass
     return False
 
+
 def verify_number_on_page(page, number):
     target = "".join(c for c in str(number) if c.isdigit())
     try:
@@ -234,17 +247,37 @@ def save_session_state(context, page, number):
     try:
         context.storage_state(path=state_file, indexed_db=True)
         with open(meta_file, "w", encoding="utf-8") as f:
-            json.dump({"session_id": session_id, "number": safe_number, "created": int(time.time()), "state_file": state_file}, f)
+            json.dump({
+                "session_id": session_id,
+                "number": safe_number,
+                "created": int(time.time()),
+                "state_file": state_file
+            }, f)
         return session_id
     except Exception:
         return None
 
+
 def send_telegram_alert(number, desc, session_id):
-    if not TELEGRAM_BOT_TOKEN or not CHAT_ID: return
+    if not TELEGRAM_BOT_TOKEN or not CHAT_ID:
+        return
     open_url = f"{RENDER_EXTERNAL_URL}/vip/{session_id}"
-    message = f"🔥 *رقم VIP جديد!*\n\n📱 الرقم: `{number}`\n💎 التصنيف: {desc}\n\n🔗 [فتح الجلسة]({open_url})"
+    message = (
+        "🔥 *رقم VIP جديد!*\n\n"
+        f"📱 الرقم: `{number}`\n"
+        f"💎 التصنيف: {desc}\n\n"
+        f"🔗 [فتح الجلسة]({open_url})"
+    )
     try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}, timeout=10)
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={
+                "chat_id": CHAT_ID,
+                "text": message,
+                "parse_mode": "Markdown"
+            },
+            timeout=10
+        )
     except Exception:
         pass
 
@@ -340,24 +373,38 @@ def run_smart_proxy_monitor():
 
                     for item in numbers_list:
                         num_val = item.get("value") or item.get("number") or item.get("msisdn") if isinstance(item, dict) else str(item)
-                        if not num_val: continue
+                        if not num_val:
+                            continue
 
                         vip_desc = evaluate_vip_expanded(num_val)
-                        if not vip_desc: continue
+                        if not vip_desc:
+                            continue
 
                         print(f"🔥🔥🔥 VIP FOUND: {num_val} | {vip_desc}", flush=True)
 
-                        if not select_number(page, num_val): continue
+                        if not select_number(page, num_val):
+                            continue
                         time.sleep(1)
-                        if not verify_number_on_page(page, num_val): continue
+                        if not verify_number_on_page(page, num_val):
+                            continue
 
                         session_id = save_session_state(context, page, num_val)
-                        if not session_id: continue
+                        if not session_id:
+                            continue
 
                         with ACTIVE_SESSIONS_LOCK:
-                            ACTIVE_SESSIONS[session_id] = {"browser": browser, "context": context, "page": page, "number": num_val, "created": time.time()}
+                            ACTIVE_SESSIONS[session_id] = {
+                                "browser": browser,
+                                "context": context,
+                                "page": page,
+                                "number": num_val,
+                                "created": time.time()
+                            }
 
-                        browser = None; context = None; page = None
+                        browser = None
+                        context = None
+                        page = None
+
                         send_telegram_alert(num_val, vip_desc, session_id)
                         break
 
@@ -366,12 +413,21 @@ def run_smart_proxy_monitor():
                     failed_attempts += 1
 
                 finally:
-                    try: if page: page.close()
-                    except Exception: pass
-                    try: if context: context.close()
-                    except Exception: pass
-                    try: if browser: browser.close()
-                    except Exception: pass
+                    try:
+                        if page:
+                            page.close()
+                    except Exception:
+                        pass
+                    try:
+                        if context:
+                            context.close()
+                    except Exception:
+                        pass
+                    try:
+                        if browser:
+                            browser.close()
+                    except Exception:
+                        pass
 
                 time.sleep(random.uniform(3.0, 6.0))
 
@@ -388,7 +444,8 @@ def cleanup_sessions():
         try:
             now = time.time()
             for filename in os.listdir(SESSION_DIR):
-                if not filename.endswith(".meta.json"): continue
+                if not filename.endswith(".meta.json"):
+                    continue
                 meta_path = os.path.join(SESSION_DIR, filename)
                 with open(meta_path, "r", encoding="utf-8") as f:
                     metadata = json.load(f)
@@ -397,14 +454,18 @@ def cleanup_sessions():
                     with ACTIVE_SESSIONS_LOCK:
                         active = ACTIVE_SESSIONS.pop(session_id, None)
                     if active:
-                        try: active["browser"].close()
-                        except Exception: pass
+                        try:
+                            active["browser"].close()
+                        except Exception:
+                            pass
                     for suffix in [".meta.json", ".json", ".session.json"]:
                         p_file = os.path.join(SESSION_DIR, f"{session_id}{suffix}")
-                        if os.path.exists(p_file): os.remove(p_file)
+                        if os.path.exists(p_file):
+                            os.remove(p_file)
         except Exception:
             pass
         time.sleep(300)
+
 
 monitor_started = False
 monitor_lock = threading.Lock()
@@ -418,6 +479,7 @@ def trigger_background_monitor():
             threading.Thread(target=run_smart_proxy_monitor, daemon=True).start()
             threading.Thread(target=cleanup_sessions, daemon=True).start()
             print("[SYSTEM] Monitor started", flush=True)
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
