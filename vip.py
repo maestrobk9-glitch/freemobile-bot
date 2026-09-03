@@ -26,8 +26,8 @@ os.makedirs(SESSION_DIR, exist_ok=True)
 
 @app.route("/vip/<session_id>")
 def view_vip_session(session_id):
-    meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
     state_file = os.path.join(SESSION_DIR, f"{session_id}.json")
+    meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
     
     if not os.path.exists(meta_file) or not os.path.exists(state_file):
         return "<h3>⚠️ هذه الجلسة غير موجودة أو انتهت صلاحيتها.</h3>", 404
@@ -38,6 +38,7 @@ def view_vip_session(session_id):
 
         number = metadata.get("number", "غير معروف")
 
+        # صفحة وسيطة لحقن الجلسة وتوجيه المستخدم مباشرة للرقم المختار
         html_content = f"""
         <!DOCTYPE html>
         <html lang="ar" dir="rtl">
@@ -58,12 +59,12 @@ def view_vip_session(session_id):
                 <h1>🔥 تم تثبيت واختيار الرقم المميز!</h1>
                 <div class="number">{number}</div>
                 <div class="loader"></div>
-                <p>جاري نقلك الآن إلى صفحة خيارات Free Mobile...</p>
+                <p>جاري نقلك إلى موقع Free Mobile لتجد الرقم بانتظارك...</p>
             </div>
             <script>
                 setTimeout(function() {{
                     window.location.href = "https://mobile.free.fr/souscription/options";
-                }}, 1500);
+                }}, 1200);
             </script>
         </body>
         </html>
@@ -74,38 +75,28 @@ def view_vip_session(session_id):
         return response
 
     except Exception as e:
-        return f"<h3>حدث خطأ أثناء فتح الجلسة: {e}</h3>", 500
+        return f"<h3>حدث خطأ أثناء تحميل الجلسة: {e}</h3>", 500
 
 @app.route("/")
 def home():
-    return "<h3>🚀 FreeMobile VIP Monitor يعمل بكفاءة عالية وفي الخلفية!</h3>"
+    return "<h3>🚀 FreeMobile VIP Engine v78 يعمل في الخلفية بكفاءة عالية!</h3>"
 
-def evaluate_vip(num):
-    clean = str(num).replace(" ", "")
+def evaluate_vip_expanded(num):
+    clean = str(num).replace(" ", "").replace("-", "")
     if not (len(clean) == 10 and (clean.startswith("06") or clean.startswith("07"))):
         return None
-
     d = clean[2:]
 
-    if len(set(d)) <= 4:
-        return "تنوع منخفض للأرقام (مميز)"
-    if d == d[::-1]:
-        return "مرآة متناظرة كاملة (Palindrome)"
-    if d[:4] == d[4:]:
-        return "نصفين متطابقين تماماً"
-
-    sequences = [
-        "0123", "1234", "2345", "3456", "4567", "5678", "6789",
-        "9876", "8765", "7654", "6543", "5432", "4321", "3210"
-    ]
-    if any(seq in d for seq in sequences):
+    # مصفوفة الأنماط الدقيقة (مطابقة لمتطلباتك)
+    if len(set(d)) <= 4: return "تنوع منخفض للأرقام (مميز)"
+    if d == d[::-1]: return "مرآة متناظرة كاملة (Palindrome)"
+    if d[:4] == d[4:]: return "نصفين متطابقين تماماً"
+    
+    if any(seq in d for seq in ["0123", "1234", "2345", "3456", "4567", "5678", "6789", "9876", "8765", "7654", "6543", "5432", "4321", "3210"]):
         return "تسلسل أرقام متتالي"
 
-    if len(set(d[-4:])) <= 2 or len(set(d[:4])) <= 2:
-        return "تكرار عالي في الأطراف"
-
-    if d[0] == d[1] == d[2] or d[-3] == d[-2] == d[-1]:
-        return "ثلاثية متتالية"
+    if len(set(d[-4:])) <= 2 or len(set(d[:4])) <= 2: return "تكرار عالي في الأطراف"
+    if d[0] == d[1] == d[2] or d[-3] == d[-2] == d[-1]: return "ثلاثية متتالية"
 
     return None
 
@@ -128,10 +119,10 @@ def save_vip_session(context, number):
         with open(meta_file, "w", encoding="utf-8") as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
 
-        print(f"💾 [حفظ استثنائي] تم حفظ جلسة VIP الرقم: {safe_number}", flush=True)
+        print(f"💾 [حفظ الجلسة] تم حفظ جلسة VIP للرقم: {safe_number}", flush=True)
         return session_id
     except Exception as e:
-        print(f"⚠️ فشل حفظ جلسة VIP: {e}", flush=True)
+        print(f"⚠️ فشل حفظ حالة الجلسة: {e}", flush=True)
         return None
 
 def send_telegram_alert(number, desc, session_id):
@@ -139,10 +130,10 @@ def send_telegram_alert(number, desc, session_id):
     open_url = f"{render_url}/vip/{session_id}"
 
     message = (
-        "🔥 *رقم مميز VIP جديد! (تم اختياره تلقائياً)*\n\n"
+        "🔥 *رقم مميز VIP جديد (مختار تلقائياً)!*\n\n"
         f"📱 الرقم: `{number}`\n"
         f"💎 التصنيف: {desc}\n\n"
-        f"🔗 [اضغط هنا للدخول وإتمام الشراء]({open_url})"
+        f"🔗 [اضغط هنا للدخول وإتمام الشراء مباشرة]({open_url})"
     )
 
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -156,19 +147,19 @@ def send_telegram_alert(number, desc, session_id):
     try:
         response = requests.post(telegram_url, json=payload, timeout=10)
         if response.ok:
-            print("📨 تم إرسال التنبيه إلى Telegram بنجاح", flush=True)
+            print("📨 تم إرسال تنبيه Telegram بنجاح", flush=True)
         else:
             print("⚠️ Telegram رفض الرسالة:", response.text, flush=True)
     except Exception as e:
-        print(f"⚠️ خطأ Telegram: {e}", flush=True)
+        print(f"⚠️ خطأ إرسال Telegram: {e}", flush=True)
 
 def run_smart_proxy_monitor():
-    print("🚀 تشغيل محرك فحص أرقام FreeMobile VIP المستقر...", flush=True)
+    print("🚀 بدء تشغيل محرك تدوير الجلسات وفحص الأرقام...", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 
     try:
         with sync_playwright() as p:
-            print("✅ [PLAYWRIGHT] تم تفعيل محرك المتصفح بنجاح", flush=True)
+            print("✅ [PLAYWRIGHT] تم تفعيل المتصفح السحابي بنجاح", flush=True)
             while True:
                 browser = None
                 try:
@@ -178,14 +169,18 @@ def run_smart_proxy_monitor():
                     )
                     page = context.new_page()
                     
-                    page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
-                    time.sleep(2.0)
+                    # محاكاة سلوك السكريبت في تدوير الجلسة وتنظيف الـ Cache
+                    page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
+                    time.sleep(1.0)
 
                     numbers_data = page.evaluate("""
                         async () => {
                             try {
                                 const res = await fetch('./api/msisdns?' + Math.random(), {
-                                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                                    headers: { 
+                                        'X-Requested-With': 'XMLHttpRequest',
+                                        'Cache-Control': 'no-cache'
+                                    }
                                 });
                                 if (res.ok) return await res.json();
                             } catch (e) {}
@@ -195,36 +190,31 @@ def run_smart_proxy_monitor():
 
                     if numbers_data:
                         numbers_list = numbers_data if isinstance(numbers_data, list) else numbers_data.get("msisdns", [])
-                        print(f"📊 [فحص] عدد الأرقام المتاحة حالياً: {len(numbers_list)}", flush=True)
                         if numbers_list:
                             for item in numbers_list:
                                 num_val = item.get("value") if isinstance(item, dict) else str(item)
                                 if not num_val:
                                     continue
 
-                                vip_desc = evaluate_vip(num_val)
+                                vip_desc = evaluate_vip_expanded(num_val)
                                 if vip_desc:
-                                    print(f"🔥🔥🔥 VIP FOUND! الرقم: {num_val} | التصنيف: {vip_desc}", flush=True)
+                                    print(files_log := f"🔥🔥🔥 VIP FOUND! الرقم: {num_val} | التصنيف: {vip_desc}", flush=True)
                                     
-                                    # تنفيذ كود اختيار وتثبيت الرقم تلقائياً داخل عناصر الصفحة
+                                    # حقن واختيار الرقم تلقائياً في واجهة الموقع (DOM Selection)
                                     try:
                                         page.evaluate(f"""
                                             (targetNum) => {{
-                                                // تحديد خيار اختيار رقم جديد
                                                 const radioNew = document.querySelector('input[value*="new"], input[id*="new"], input[name*="numero"]');
                                                 if (radioNew) {{
                                                     radioNew.click();
                                                     radioNew.dispatchEvent(new Event('change', {{ bubbles: true }}));
                                                 }}
                                                 
-                                                // البحث في القوائم المنسدلة واختيار الرقم المميز بدقة
                                                 const selects = document.querySelectorAll('select');
                                                 selects.forEach(sel => {{
                                                     for (let i = 0; i < sel.options.length; i++) {{
                                                         let opt = sel.options[i];
-                                                        let cleanOpt = opt.value.replace(/\\s+/g, '');
-                                                        let cleanTarget = targetNum.replace(/\\s+/g, '');
-                                                        if (cleanOpt.includes(cleanTarget) || opt.text.replace(/\\s+/g, '').includes(cleanTarget)) {{
+                                                        if (opt.value.includes(targetNum) || opt.text.includes(targetNum)) {{
                                                             sel.selectedIndex = i;
                                                             sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
                                                             sel.dispatchEvent(new Event('input', {{ bubbles: true }}));
@@ -233,29 +223,24 @@ def run_smart_proxy_monitor():
                                                 }});
                                             }}
                                         """, num_val)
-                                        time.sleep(0.5)
+                                        time.sleep(0.3)
                                     except Exception as ex:
-                                        print(f"⚠️ خطأ أثناء اختيار الرقم تلقائياً: {ex}", flush=True)
+                                        print(f"⚠️ خطأ في اختيار الرقم: {ex}", flush=True)
 
                                     session_id = save_vip_session(context, num_val)
                                     if session_id:
                                         send_telegram_alert(num_val, vip_desc, session_id)
                                     break
-                    else:
-                        print("⚠️ [فحص] لم يتم استرجاع قائمة الأرقام.", flush=True)
-
+                    
                     browser.close()
                 except Exception as e:
-                    print(f"⚠️ [MONITOR LOOP ERROR]: {e}", flush=True)
                     if browser:
-                        try:
-                            browser.close()
-                        except:
-                            pass
+                        try: browser.close() except: pass
 
-                time.sleep(random.uniform(4.0, 7.0))
+                # سرعة التدوير المستمر لجلب أرقام جديدة وجلسات نظيفة تماماً مثل السكريبت
+                time.sleep(random.uniform(2.5, 4.5))
     except Exception as e:
-        print(f"❌ [FATAL PLAYWRIGHT ERROR]: {e}", flush=True)
+        print(f"❌ خطأ فادح في المحرك: {e}", flush=True)
 
 monitor_started = False
 monitor_lock = threading.Lock()
@@ -268,7 +253,7 @@ def trigger_background_monitor():
             monitor_started = True
             t = threading.Thread(target=run_smart_proxy_monitor, daemon=True)
             t.start()
-            print("[SYSTEM] Background monitor thread launched via web request!", flush=True)
+            print("[SYSTEM] تم إطلاق محرك الفحص في الخلفية بنجاح!", flush=True)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
