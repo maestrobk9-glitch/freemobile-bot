@@ -168,6 +168,26 @@ def run_smart_proxy_monitor():
                     page = context.new_page()
                     
                     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
+                    time.sleep(1.5)
+
+                    # تفعيل خيار "رقم جديد" تلقائياً قبل جلب الأرقام
+                    page.evaluate("""
+                        () => {
+                            const labels = Array.from(document.querySelectorAll('label, div, span'));
+                            const newNumLabel = labels.find(el => el.textContent.includes('nouveau numéro'));
+                            if (newNumLabel) {
+                                newNumLabel.click();
+                            }
+                            const radios = document.querySelectorAll('input[type="radio"]');
+                            radios.forEach(r => {
+                                if (r.value && (r.value.includes('new') || r.value.includes('nouveau') || r.id.includes('new'))) {
+                                    r.click();
+                                    r.checked = true;
+                                    r.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                            });
+                        }
+                    """)
                     time.sleep(1.0)
 
                     numbers_data = page.evaluate("""
@@ -200,12 +220,6 @@ def run_smart_proxy_monitor():
                                     try:
                                         page.evaluate(f"""
                                             (targetNum) => {{
-                                                const radioNew = document.querySelector('input[value*="new"], input[id*="new"], input[name*="numero"]');
-                                                if (radioNew) {{
-                                                    radioNew.click();
-                                                    radioNew.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                                                }}
-                                                
                                                 const selects = document.querySelectorAll('select');
                                                 selects.forEach(sel => {{
                                                     for (let i = 0; i < sel.options.length; i++) {{
