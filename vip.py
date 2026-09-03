@@ -250,14 +250,14 @@ def send_telegram_alert(number, desc, session_id):
 
 
 # ============================================================
-# MONITOR (WITH IP ROTATION LOGIC AFTER FAILURES)
+# MONITOR
 # ============================================================
 
 def run_smart_proxy_monitor():
     print("🚀 بدء محرك الفحص عبر الـ API مع إعادة تدوير الاتصال...", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 
-    failed_attempts = 0  # عداد المحاولات الفاشلة أو عدم العثور على أرقام لتغيير الجلسة/الـ IP
+    failed_attempts = 0
 
     try:
         with sync_playwright() as p:
@@ -267,7 +267,6 @@ def run_smart_proxy_monitor():
                 page = None
 
                 try:
-                    # إذا تجاوزنا عدد محاولات بدون نتيجة، نقوم بإعادة إنشاء المتصفح بالكامل (تحديث البصمة / الـ IP الافتراضي)
                     if failed_attempts >= 8:
                         print("🔄 إعادة تهيئة المتصفح بالكامل لتغيير الجلسة وتفادي الحظر...", flush=True)
                         failed_attempts = 0
@@ -288,7 +287,6 @@ def run_smart_proxy_monitor():
                     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
                     time.sleep(2)
 
-                    # استدعاء الـ API القديم مباشرة كما كان يعمل سابقاً
                     api_url = f"https://mobile.free.fr/api/msisdns?{random.random()}"
                     print(f"🔎 جلب الأرقام عبر الـ API: {api_url}", flush=True)
 
@@ -322,7 +320,6 @@ def run_smart_proxy_monitor():
                         failed_attempts += 1
                         continue
 
-                    # استخراج القائمة
                     numbers_list = []
                     if isinstance(numbers_data, list):
                         numbers_list = numbers_data
@@ -338,9 +335,8 @@ def run_smart_proxy_monitor():
                         time.sleep(3)
                         continue
 
-                    # تصفير عداد الفشل عند نجاح جلب الأرقام
                     failed_attempts = 0
-                    print(dk := f"📊 عدد الأرقام المسترجعة: {len(numbers_list)}", flush=True)
+                    print(f"📊 عدد الأرقام المسترجعة: {len(numbers_list)}", flush=True)
 
                     for item in numbers_list:
                         num_val = item.get("value") or item.get("number") or item.get("msisdn") if isinstance(item, dict) else str(item)
