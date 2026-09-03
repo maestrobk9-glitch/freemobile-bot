@@ -123,12 +123,16 @@ def save_vip_session(context, number):
         return None
 
 def send_telegram_alert(number, desc, session_id):
-    hostname = os.environ.get("HOSTNAME", "YOUR-USERNAME.pythonanywhere.com")
+    # استخدام الرابط الفعلي لـ Render تلقائياً
+    hostname = os.environ.get("RENDER_EXTERNAL_URL", "https://freemobile-bot.onrender.com")
+    if hostname.startswith("https://"):
+        hostname = hostname.replace("https://", "")
+    
     open_url = f"https://{hostname}/vip/{session_id}"
 
     message = (
         "🔥 *رقم مميز VIP جديد!*\n\n"
-        f"📱 الرقم: \`{number}\`\n"
+        f"📱 الرقم: `{number}`\n"
         f"💎 التصنيف: {desc}\n\n"
         f"🔗 [فتح الجلسة وحجز الرقم]({open_url})"
     )
@@ -153,11 +157,9 @@ def send_telegram_alert(number, desc, session_id):
 def run_smart_proxy_monitor():
     print("🚀 تشغيل محرك فحص أرقام FreeMobile VIP الصاروخي...")
     consecutive_empty = 0
-    attempt = 0
 
     with sync_playwright() as p:
         while True:
-            attempt += 1
             browser = None
             use_proxy = False
             proxy_url = None
@@ -220,9 +222,6 @@ def run_smart_proxy_monitor():
                                 if session_id:
                                     send_telegram_alert(num_val, vip_desc, session_id)
                                 break
-
-                        if not vip_found:
-                            pass
                     else:
                         consecutive_empty += 1
                 else:
@@ -243,6 +242,8 @@ def start_background_monitor():
     t = threading.Thread(target=run_smart_proxy_monitor, daemon=True)
     t.start()
 
+# تشغيل خيط الخلفية تلقائياً عند تحميل التطبيق بواسطة Gunicorn أو محلياً
+start_background_monitor()
+
 if __name__ == "__main__":
-    start_background_monitor()
     app.run(host="0.0.0.0", port=5000)
