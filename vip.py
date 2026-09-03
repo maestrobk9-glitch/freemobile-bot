@@ -20,7 +20,7 @@ CHAT_ID = os.environ.get(
     "8091746597"
 )
 
-TARGET_URL = "https://mobile.free.fr/souscription/"
+TARGET_URL = "https://mobile.free.fr/souscription/options"
 SESSION_DIR = "vip_sessions"
 os.makedirs(SESSION_DIR, exist_ok=True)
 
@@ -43,7 +43,7 @@ def view_vip_session(session_id):
         <html lang="ar" dir="rtl">
         <head>
             <meta charset="UTF-8">
-            <title>جاري فتح جلسة الرقم VIP...</title>
+            <title>تم اختيار الرقم المميز بنجاح!</title>
             <style>
                 body {{ font-family: Tahoma, sans-serif; background: #0f172a; color: white; text-align: center; padding-top: 100px; }}
                 .card {{ background: #1e293b; padding: 40px; border-radius: 12px; display: inline-block; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }}
@@ -55,14 +55,14 @@ def view_vip_session(session_id):
         </head>
         <body>
             <div class="card">
-                <h1>🔥 تم تجهيز جلسة الرقم المميز!</h1>
+                <h1>🔥 تم تثبيت واختيار الرقم المميز!</h1>
                 <div class="number">{number}</div>
                 <div class="loader"></div>
-                <p>جاري نقلك مباشرة إلى موقع Free Mobile لتجد الرقم بانتظارك...</p>
+                <p>جاري نقلك الآن إلى صفحة خيارات Free Mobile...</p>
             </div>
             <script>
                 setTimeout(function() {{
-                    window.location.href = "https://mobile.free.fr/souscription/";
+                    window.location.href = "https://mobile.free.fr/souscription/options";
                 }}, 1500);
             </script>
         </body>
@@ -139,10 +139,10 @@ def send_telegram_alert(number, desc, session_id):
     open_url = f"{render_url}/vip/{session_id}"
 
     message = (
-        "🔥 *رقم مميز VIP جديد!*\n\n"
+        "🔥 *رقم مميز VIP جديد! (تم اختياره تلقائياً)*\n\n"
         f"📱 الرقم: `{number}`\n"
         f"💎 التصنيف: {desc}\n\n"
-        f"🔗 [اضغط هنا لفتح الجلسة وحجز الرقم]({open_url})"
+        f"🔗 [اضغط هنا للدخول وإتمام الشراء]({open_url})"
     )
 
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -179,7 +179,7 @@ def run_smart_proxy_monitor():
                     page = context.new_page()
                     
                     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
-                    time.sleep(1.5)
+                    time.sleep(2.0)
 
                     numbers_data = page.evaluate("""
                         async () => {
@@ -195,7 +195,7 @@ def run_smart_proxy_monitor():
 
                     if numbers_data:
                         numbers_list = numbers_data if isinstance(numbers_data, list) else numbers_data.get("msisdns", [])
-                        print(f"📊 [فحص] عدد الأرقام المتاحة حالياً في الموقع: {len(numbers_list)}", flush=True)
+                        print(f"📊 [فحص] عدد الأرقام المتاحة حالياً: {len(numbers_list)}", flush=True)
                         if numbers_list:
                             for item in numbers_list:
                                 num_val = item.get("value") if isinstance(item, dict) else str(item)
@@ -205,12 +205,44 @@ def run_smart_proxy_monitor():
                                 vip_desc = evaluate_vip(num_val)
                                 if vip_desc:
                                     print(f"🔥🔥🔥 VIP FOUND! الرقم: {num_val} | التصنيف: {vip_desc}", flush=True)
+                                    
+                                    # تنفيذ كود اختيار وتثبيت الرقم تلقائياً داخل عناصر الصفحة
+                                    try:
+                                        page.evaluate(f"""
+                                            (targetNum) => {{
+                                                // تحديد خيار اختيار رقم جديد
+                                                const radioNew = document.querySelector('input[value*="new"], input[id*="new"], input[name*="numero"]');
+                                                if (radioNew) {{
+                                                    radioNew.click();
+                                                    radioNew.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                                }}
+                                                
+                                                // البحث في القوائم المنسدلة واختيار الرقم المميز بدقة
+                                                const selects = document.querySelectorAll('select');
+                                                selects.forEach(sel => {{
+                                                    for (let i = 0; i < sel.options.length; i++) {{
+                                                        let opt = sel.options[i];
+                                                        let cleanOpt = opt.value.replace(/\\s+/g, '');
+                                                        let cleanTarget = targetNum.replace(/\\s+/g, '');
+                                                        if (cleanOpt.includes(cleanTarget) || opt.text.replace(/\\s+/g, '').includes(cleanTarget)) {{
+                                                            sel.selectedIndex = i;
+                                                            sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                                            sel.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                                        }}
+                                                    }}
+                                                }});
+                                            }}
+                                        """, num_val)
+                                        time.sleep(0.5)
+                                    except Exception as ex:
+                                        print(f"⚠️ خطأ أثناء اختيار الرقم تلقائياً: {ex}", flush=True)
+
                                     session_id = save_vip_session(context, num_val)
                                     if session_id:
                                         send_telegram_alert(num_val, vip_desc, session_id)
                                     break
                     else:
-                        print("⚠️ [فحص] لم يتم استرجاع قائمة الأرقام في هذه المحاولة.", flush=True)
+                        print("⚠️ [فحص] لم يتم استرجاع قائمة الأرقام.", flush=True)
 
                     browser.close()
                 except Exception as e:
