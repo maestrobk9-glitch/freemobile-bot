@@ -78,7 +78,7 @@ def view_vip_session(session_id):
 
 @app.route("/")
 def home():
-    return "<h3>🚀 FreeMobile VIP Engine v78 يعمل في الخلفية بكفاءة عالية!</h3>"
+    return "<h3>🚀 FreeMobile VIP Engine v79 يعمل بكفاءة عالية وبدون توقف!</h3>"
 
 def evaluate_vip_expanded(num):
     clean = str(num).replace(" ", "").replace("-", "")
@@ -152,7 +152,7 @@ def send_telegram_alert(number, desc, session_id):
         print(f"⚠️ خطأ إرسال Telegram: {e}", flush=True)
 
 def run_smart_proxy_monitor():
-    print("🚀 بدء تشغيل محرك تدوير الجلسات وفحص الأرقام...", flush=True)
+    print("🚀 بدء تشغيل محرك تدوير الجلسات وفحص الأرقام في الخلفية...", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 
     try:
@@ -170,7 +170,7 @@ def run_smart_proxy_monitor():
                     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
                     time.sleep(1.5)
 
-                    # تفعيل خيار "رقم جديد" تلقائياً قبل جلب الأرقام
+                    # تفعيل خيار "رقم جديد" تلقائياً
                     page.evaluate("""
                         () => {
                             const labels = Array.from(document.querySelectorAll('label, div, span'));
@@ -256,19 +256,24 @@ def run_smart_proxy_monitor():
     except Exception as e:
         print(f"❌ خطأ فادح في المحرك: {e}", flush=True)
 
-monitor_started = False
-monitor_lock = threading.Lock()
+# تشغيل البوت ذاتياً لمنع النوم على Render
+def self_ping_worker():
+    render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://freemobile-bot.onrender.com")
+    while True:
+        try:
+            requests.get(render_url, timeout=10)
+        except:
+            pass
+        time.sleep(180) # كل 3 دقائق
 
-@app.before_request
-def trigger_background_monitor():
-    global monitor_started
-    with monitor_lock:
-        if not monitor_started:
-            monitor_started = True
-            t = threading.Thread(target=run_smart_proxy_monitor, daemon=True)
-            t.start()
-            print("[SYSTEM] تم إطلاق محرك الفحص في الخلفية بنجاح!", flush=True)
-
+# إطلاق المحرك فوراً عند تشغيل الملف وليس عند أول طلب زائر
 if __name__ == "__main__":
+    t_monitor = threading.Thread(target=run_smart_proxy_monitor, daemon=True)
+    t_monitor.start()
+    print("[SYSTEM] تم بدء محرك فحص الأرقام فوراً مع إقلاع السيرفر!", flush=True)
+
+    t_ping = threading.Thread(target=self_ping_worker, daemon=True)
+    t_ping.start()
+
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
