@@ -25,6 +25,12 @@ CHAT_ID = os.environ.get(
     ""
 )
 
+# رابط البروكسي المستخدم في المتصفح (مثال: http://user:pass@ip:port)
+PROXY_URL = os.environ.get("PROXY_URL", "")
+
+# رابط الـ API الخاص بمزود البروكسي لتغيير الـ IP فوراً (إذا توفر لدى الشركة التي تشتري منها البروكسي)
+CHANGE_IP_API = os.environ.get("CHANGE_IP_API", "")
+
 TARGET_URL = "https://mobile.free.fr/souscription/options"
 
 RENDER_EXTERNAL_URL = os.environ.get(
@@ -45,10 +51,6 @@ MOBILE_UA = (
     "Version/16.0 Mobile/15E148 Safari/604.1"
 )
 
-# ============================================================
-# ACTIVE SESSIONS
-# ============================================================
-
 ACTIVE_SESSIONS = {}
 ACTIVE_SESSIONS_LOCK = threading.Lock()
 
@@ -68,14 +70,14 @@ def home():
         <title>Free Mobile VIP</title>
     </head>
     <body style="background:#0f172a;color:white;font-family:Arial;text-align:center;padding:50px;">
-        <h2>🚀 FreeMobile VIP Engine يعمل بنجاح</h2>
+        <h2>🚀 FreeMobile VIP Engine يعمل مع تغيير الـ IP</h2>
     </body>
     </html>
     """
 
 
 # ============================================================
-# VIP LINK
+# VIP LINK & SESSION MANAGEMENT
 # ============================================================
 
 @app.route("/vip/<session_id>")
@@ -124,10 +126,6 @@ def view_vip_session(session_id):
         return (f"<h3>❌ خطأ: {e}</h3>", 500)
 
 
-# ============================================================
-# OPEN SAVED SESSION
-# ============================================================
-
 @app.route("/vip/<session_id>/open")
 def open_vip_session(session_id):
     meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
@@ -148,7 +146,11 @@ def open_vip_session(session_id):
             return f"<h2>🔥 جلسة الرقم مفتوحة</h2><h1 style='color:#facc15;direction:ltr;'>{number}</h1>"
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            launch_args = {"headless": True}
+            if PROXY_URL:
+                launch_args["proxy"] = {"server": PROXY_URL}
+
+            browser = p.chromium.launch(**launch_args)
             context = browser.new_context(
                 storage_state=state_file,
                 user_agent=MOBILE_UA,
@@ -176,7 +178,7 @@ def open_vip_session(session_id):
 
 
 # ============================================================
-# VIP EVALUATOR
+# VIP EVALUATOR & HELPERS
 # ============================================================
 
 def evaluate_vip_expanded(num):
@@ -204,10 +206,6 @@ def evaluate_vip_expanded(num):
     return None
 
 
-# ============================================================
-# SELECT & VERIFY
-# ============================================================
-
 def select_number(page, number):
     target = "".join(c for c in str(number) if c.isdigit())
     try:
@@ -234,10 +232,6 @@ def verify_number_on_page(page, number):
     except Exception:
         return False
 
-
-# ============================================================
-# SAVE SESSION & TELEGRAM
-# ============================================================
 
 def save_session_state(context, page, number):
     session_id = uuid.uuid4().hex
@@ -282,15 +276,26 @@ def send_telegram_alert(number, desc, session_id):
         pass
 
 
+def request_new_ip_from_proxy():
+    """وظيفة لتغيير الـ IP عبر الـ API الخاص بالبروكسي إذا كان متوفراً"""
+    if CHANGE_IP_API:
+        try:
+            requests.get(CHANGE_IP_API, timeout=10)
+            print("🔄 تم إرسال طلب تغيير الـ IP إلى مزود البروكسي بنجاح.", flush=True)
+            time.sleep(3) # الانتظار قليلاً حتى يتم تغيير الـ IP فعلياً
+        except Exception as e:
+            print(f"⚠️ فشل تغيير الـ IP عبر الـ API: {e}", flush=True)
+
+
 # ============================================================
-# MONITOR
+# MONITOR WITH FORCED IP ROTATION
 # ============================================================
 
 def run_smart_proxy_monitor():
-    print("🚀 بدء محرك الفحص عبر الـ API مع إعادة تدوير الاتصال...", flush=True)
+    print("🚀 بدء محرك الفحص مع نظام التغيير الاجباري للـ IP عند غياب الأرقام...", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 
-    failed_attempts = 0
+    empty_scans_count = 0
 
     try:
         with sync_playwright() as p:
@@ -300,12 +305,17 @@ def run_smart_proxy_monitor():
                 page = None
 
                 try:
-                    if failed_attempts >= 8:
-                        print("🔄 إعادة تهيئة المتصفح بالكامل لتغيير الجلسة وتفادي الحظر...", flush=True)
-                        failed_attempts = 0
-                        time.sleep(5)
+                    # إذا لم يتم العثور على أرقام لمدة مرتين، نقوم بطلب IP جديد ومسح الجلسة
+                    if empty_scans_count >= 2:
+                        print("🔄 لم يتم العثور على أرقام، جاري تغيير الـ IP فوراً...", flush=True)
+                        request_new_ip_from_proxy()
+                        empty_scans_count = 0
 
-                    browser = p.chromium.launch(headless=True)
+                    launch_args = {"headless": True}
+                    if PROXY_URL:
+                        launch_args["proxy"] = {"server": PROXY_URL}
+
+                    browser = p.chromium.launch(**launch_args)
                     context = browser.new_context(
                         user_agent=MOBILE_UA,
                         viewport={"width": 390, "height": 844},
@@ -316,66 +326,41 @@ def run_smart_proxy_monitor():
                     )
                     page = context.new_page()
 
-                    print("🌐 فتح صفحة Free Mobile لتهيئة الكوكيز...", flush=True)
+                    print("🌐 فتح صفحة Free Mobile بالفحص الجديد...", flush=True)
                     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
-                    time.sleep(2)
+                    time.sleep(4)
 
-                    api_url = f"https://mobile.free.fr/api/msisdns?{random.random()}"
-                    print(f"🔎 جلب الأرقام عبر الـ API: {api_url}", flush=True)
-
-                    api_result = page.evaluate("""
-                        async (url) => {
-                            try {
-                                const res = await fetch(url, {
-                                    method: "GET",
-                                    credentials: "include",
-                                    headers: { "X-Requested-With": "XMLHttpRequest", "Cache-Control": "no-cache" }
-                                });
-                                const text = await res.text();
-                                return { ok: res.ok, status: res.status, text: text };
-                            } catch(e) {
-                                return { ok: false, status: 0, text: "", error: String(e) };
-                            }
+                    numbers_list = page.evaluate("""
+                        () => {
+                            let results = [];
+                            const elements = document.querySelectorAll('select option, div, span, option');
+                            elements.forEach(el => {
+                                let text = el.innerText || el.value || '';
+                                const matches = text.match(/0[67][\\s\\d\\.]{8,}/g);
+                                if (matches) {
+                                    matches.forEach(m => {
+                                        let cleanNum = m.replace(/\\D/g, '');
+                                        if (cleanNum.length === 10) {
+                                            results.push(cleanNum);
+                                        }
+                                    });
+                                }
+                            });
+                            return [...new Set(results)];
                         }
-                    """, api_url)
-
-                    if not api_result.get("ok"):
-                        print(f"⚠️ الـ API أعطى خطأ أو حظر (Status: {api_result.get('status')})، زيادة عداد الفشل...", flush=True)
-                        failed_attempts += 1
-                        time.sleep(5)
-                        continue
-
-                    raw_text = api_result.get("text", "")
-                    try:
-                        numbers_data = json.loads(raw_text)
-                    except Exception:
-                        print("⚠️ الاستجابة ليست JSON صالح، إعادة المحاولة...", flush=True)
-                        failed_attempts += 1
-                        continue
-
-                    numbers_list = []
-                    if isinstance(numbers_data, list):
-                        numbers_list = numbers_data
-                    elif isinstance(numbers_data, dict):
-                        for key in ["msisdns", "numbers", "data", "results", "items"]:
-                            if isinstance(numbers_data.get(key), list):
-                                numbers_list = numbers_data.get(key)
-                                break
+                    """)
 
                     if not numbers_list:
-                        print("⚠️ لم يتم العثور على أرقام في الـ API، إعادة المحاولة...", flush=True)
-                        failed_attempts += 1
-                        time.sleep(3)
+                        print("⚠️ الصفحة فارغة ولم يتم رصد أي أرقام، سيتم تغيير الـ IP في المرة القادمة...", flush=True)
+                        empty_scans_count += 1
+                        time.sleep(4)
                         continue
 
-                    failed_attempts = 0
-                    print(f"📊 عدد الأرقام المسترجعة: {len(numbers_list)}", flush=True)
+                    empty_scans_count = 0
+                    print(f"📊 عدد الأرقام المكتشفة: {len(numbers_list)}", flush=True)
 
-                    for item in numbers_list:
-                        num_val = item.get("value") or item.get("number") or item.get("msisdn") if isinstance(item, dict) else str(item)
-                        if not num_val:
-                            continue
-
+                    found_vip = False
+                    for num_val in numbers_list:
                         vip_desc = evaluate_vip_expanded(num_val)
                         if not vip_desc:
                             continue
@@ -406,11 +391,15 @@ def run_smart_proxy_monitor():
                         page = None
 
                         send_telegram_alert(num_val, vip_desc, session_id)
+                        found_vip = True
                         break
+
+                    if not found_vip:
+                        print("ℹ️ الأرقام المتاحة عادية، الانتقال للدورة التالية...", flush=True)
 
                 except Exception as e:
                     print(f"⚠️ LOOP ERROR: {repr(e)}", flush=True)
-                    failed_attempts += 1
+                    empty_scans_count += 1
 
                 finally:
                     try:
@@ -429,7 +418,7 @@ def run_smart_proxy_monitor():
                     except Exception:
                         pass
 
-                time.sleep(random.uniform(3.0, 6.0))
+                time.sleep(random.uniform(3.0, 5.0))
 
     except Exception as e:
         print(f"❌ FATAL: {repr(e)}", flush=True)
