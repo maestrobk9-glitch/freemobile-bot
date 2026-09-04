@@ -64,11 +64,9 @@ def view_vip_session(session_id):
                 <div class="number">{number}</div>
                 <div class="loader"></div>
                 <p>جاري تحويلك وإعداد جلستك على موقع Free Mobile...</p>
-                <a href="https://mobile.free.fr/souscription/options" class="btn" id="goBtn">اضغط هنا إذا لم يتم تحويلك تلقائياً</a>
+                <a href="https://mobile.free.fr/souscription/options" class="btn">اضغط هنا إذا لم يتم تحويلك تلقائياً</a>
             </div>
             <script>
-                // حفظ رقم الجلسة في الكوكيز أو التخزين المحلي للمتصفح إن أمكن
-                localStorage.setItem("vip_last_number", "{number}");
                 setTimeout(function() {{
                     window.location.href = "https://mobile.free.fr/souscription/options";
                 }}, 1500);
@@ -114,7 +112,6 @@ def save_vip_session(context, number):
     meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
 
     try:
-        # حفظ حالة المتصفح بالكامل (Cookies + LocalStorage)
         storage = context.storage_state()
         metadata = {
             "session_id": session_id,
@@ -170,23 +167,24 @@ def run_smart_proxy_monitor():
     while True:
         try:
             with sync_playwright() as p:
-                print("✅ [PLAYWRIGHT] تم تشغيل المتصفح بنجاح، جاري فحص الموقع...", flush=True)
+                print("✅ [PLAYWRIGHT] تم تشغيل المحرك بنجاح، جاري فتح المتصفح...", flush=True)
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+                )
+                
                 while True:
-                    browser = None
+                    context = None
                     try:
-                        browser = p.chromium.launch(
-                            headless=True,
-                            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-                        )
                         context = browser.new_context(
                             user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
                         )
                         page = context.new_page()
                         
+                        print("🌐 [FETCH] جاري الاتصال بموقع Free Mobile...", flush=True)
                         page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
                         time.sleep(2.0)
 
-                        # تفعيل خيار اختيار رقم جديد تلقائياً
                         try:
                             page.evaluate("""
                                 () => {
@@ -220,6 +218,7 @@ def run_smart_proxy_monitor():
 
                         if numbers_data:
                             numbers_list = numbers_data if isinstance(numbers_data, list) else numbers_data.get("msisdns", [])
+                            print(جاري فحص عدد أرقام: {len(numbers_list)}, flush=True)
                             if numbers_list:
                                 for item in numbers_list:
                                     num_val = item.get("value") if isinstance(item, dict) else str(item)
@@ -230,7 +229,6 @@ def run_smart_proxy_monitor():
                                     if vip_desc:
                                         print(f"🔥🔥🔥 VIP FOUND! الرقم: {num_val} | التصنيف: {vip_desc}", flush=True)
                                         
-                                        # محاولة اختيار الرقم وتثبيته في الصفحة قبل أخذ الـ State
                                         try:
                                             page.evaluate(f"""
                                                 (targetNum) => {{
@@ -255,20 +253,22 @@ def run_smart_proxy_monitor():
                                         if session_id:
                                             send_telegram_alert(num_val, vip_desc, session_id)
                                         break
+                        else:
+                            print("⏳ لم يتم جلب الأرقام في هذه المحاولة، جاري إعادة المحاولة...", flush=True)
                         
-                        if browser:
-                            browser.close()
+                        if context:
+                            context.close()
                     except Exception as e:
                         print(f"⚠️ [LOOP ERROR]: {e}", flush=True)
-                        if browser:
+                        if context:
                             try:
-                                browser.close()
+                                context.close()
                             except Exception:
                                 pass
 
-                    time.sleep(random.uniform(2.5, 4.5))
+                    time.sleep(random.uniform(3.0, 5.0))
         except Exception as e:
-            print(f"❌ [PLAYWRIGHT RESTART ERROR]: {e}, إعادة المحاولة خلال 5 ثوانٍ...", flush=True)
+            print(f"❌ [PLAYWRIGHT RESTART ERROR]: {e}, إعادة التشغيل خلال 5 ثوانٍ...", flush=True)
             time.sleep(5)
 
 if __name__ == "__main__":
