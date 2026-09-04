@@ -619,14 +619,15 @@ body {{ margin:0; background:#0f172a; color:#fff; font-family:Arial,sans-serif; 
 .number {{ direction:ltr; color:#facc15; font-size:25px; font-weight:bold; margin-top:5px; }}
 .status {{ margin-top:6px; color:#94a3b8; font-size:13px; }}
 .viewer {{ padding:15px; display:flex; justify-content:center; }}
-.screen-box {{ width:min(390px,100%); background:#000; border-radius:15px; overflow:hidden; box-shadow:0 10px 40px rgba(0,0,0,.5); }}
+.screen-box {{ width:min(390px,100%); background:#000; border-radius:15px; overflow:hidden; box-shadow:0 10px 40px rgba(0,0,0,.5); position:relative; }}
 #screen {{ display:block; width:100%; height:auto; background:#000; user-select:none; -webkit-user-select:none; touch-action:none; }}
 .controls {{ max-width:500px; margin:auto; padding:0 15px 30px; }}
 .row {{ display:flex; gap:8px; margin-top:8px; }}
-button {{ flex:1; border:0; border-radius:10px; padding:13px 8px; background:#334155; color:white; font-size:15px; }}
+button {{ flex:1; border:0; border-radius:10px; padding:13px 8px; background:#334155; color:white; font-size:15px; cursor:pointer; }}
 button:active {{ transform:scale(.97); }}
 .green {{ background:#16a34a; }}
 .red {{ background:#dc2626; }}
+.blue {{ background:#2563eb; }}
 input {{ flex:1; min-width:0; border:0; border-radius:10px; padding:13px; font-size:16px; }}
 </style>
 </head>
@@ -642,6 +643,10 @@ input {{ flex:1; min-width:0; border:0; border-radius:10px; padding:13px; font-s
 </div>
 </div>
 <div class="controls">
+<div class="row">
+<button class="blue" onclick="sendWheel(0, -350)">⬆️ نزول للأعلى (Scroll Up)</button>
+<button class="blue" onclick="sendWheel(0, 350)">⬇️ نزول للأسفل (Scroll Down)</button>
+</div>
 <div class="row"><button onclick="sendKey('ArrowUp')">↑</button></div>
 <div class="row"><button onclick="sendKey('ArrowLeft')">←</button><button class="green" onclick="sendKey('Enter')">ENTER</button><button onclick="sendKey('ArrowRight')">→</button></div>
 <div class="row"><button onclick="sendKey('ArrowDown')">↓</button></div>
@@ -682,8 +687,20 @@ screen.addEventListener("pointerup", async function(event) {{
             headers:{{"Content-Type": "application/json"}},
             body: JSON.stringify({{ token:TOKEN, x:x, y:y, display_width:rect.width, display_height:rect.height }})
         }});
+        setTimeout(refreshScreen, 300);
     }} catch(e) {{}}
 }});
+
+async function sendWheel(dx, dy) {{
+    try {{
+        await fetch(BASE + "/wheel", {{
+            method:"POST",
+            headers:{{"Content-Type": "application/json"}},
+            body: JSON.stringify({{ token:TOKEN, dx:dx, dy:dy }})
+        }});
+        setTimeout(refreshScreen, 300);
+    }} catch(e) {{}}
+}}
 
 screen.addEventListener("wheel", async function(event) {{
     event.preventDefault();
@@ -703,6 +720,7 @@ async function sendKey(key) {{
             headers:{{"Content-Type": "application/json"}},
             body: JSON.stringify({{ token:TOKEN, key:key }})
         }});
+        setTimeout(refreshScreen, 300);
     }} catch(e) {{}}
 }}
 
@@ -717,6 +735,7 @@ async function sendText() {{
             body: JSON.stringify({{ token:TOKEN, text:text }})
         }});
         input.value = "";
+        setTimeout(refreshScreen, 300);
     }} catch(e) {{}}
 }}
 
@@ -728,6 +747,7 @@ async function reloadPage() {{
             headers:{{"Content-Type": "application/json"}},
             body: JSON.stringify({{ token:TOKEN }})
         }});
+        setTimeout(refreshScreen, 500);
     }} catch(e) {{}}
 }}
 
@@ -1004,10 +1024,6 @@ def run_remote_session(page, session):
         remove_live_session(session["session_id"])
 
 
-# ============================================================
-# GET NUMBERS (محسنة لتجنب 0 أرقام)
-# ============================================================
-
 def get_numbers(page):
     result = page.evaluate(
         """
@@ -1045,10 +1061,6 @@ def get_numbers(page):
     return result
 
 
-# ============================================================
-# MONITOR
-# ============================================================
-
 def run_smart_monitor():
     print("🔥🔥🔥 [THREAD ACTIVE] محرك الفحص بدأ", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/render/project/src/pw-browsers"
@@ -1085,7 +1097,6 @@ def run_smart_monitor():
 
                         page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
                         
-                        # محاكاة حركة خفيفة للماوس لتفادي كشف الـ Bot وجلب الأرقام بشكل صحيح
                         try:
                             page.mouse.move(100, 100)
                             page.mouse.down()
