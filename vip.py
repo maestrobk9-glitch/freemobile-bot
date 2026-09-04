@@ -5,459 +5,243 @@ import random
 import uuid
 import requests
 import threading
-
-from flask import Flask
+from flask import Flask, jsonify, request, redirect, render_template_string, make_response
 from playwright.sync_api import sync_playwright
 
 app = Flask(__name__)
 
-# ============================================================
-# CONFIG
-# ============================================================
-
 TELEGRAM_BOT_TOKEN = os.environ.get(
     "TELEGRAM_BOT_TOKEN",
-    ""
+    "8958338182:AAH5FiqnleZK44TNsQ89FnSxGSvclweomPY"
 )
 
 CHAT_ID = os.environ.get(
     "CHAT_ID",
-    ""
+    "8091746597"
 )
-
-PROXY_URL = os.environ.get("PROXY_URL", "")
-CHANGE_IP_API = os.environ.get("CHANGE_IP_API", "")
 
 TARGET_URL = "https://mobile.free.fr/souscription/options"
-API_URL = "https://mobile.free.fr/souscription/api/msisdns"
-
-RENDER_EXTERNAL_URL = os.environ.get(
-    "RENDER_EXTERNAL_URL",
-    "https://freemobile-bot.onrender.com"
-).rstrip("/")
-
 SESSION_DIR = "vip_sessions"
-
-os.makedirs(
-    SESSION_DIR,
-    exist_ok=True
-)
-
-MOBILE_UA = (
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) "
-    "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-    "Version/16.0 Mobile/15E148 Safari/604.1"
-)
-
-ACTIVE_SESSIONS = {}
-ACTIVE_SESSIONS_LOCK = threading.Lock()
-
-
-# ============================================================
-# HOME
-# ============================================================
-
-@app.route("/")
-def home():
-    return """
-    <!DOCTYPE html>
-    <html lang="ar" dir="rtl">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width,initial-scale=1">
-        <title>Free Mobile VIP</title>
-    </head>
-    <body style="background:#0f172a;color:white;font-family:Arial;text-align:center;padding:50px;">
-        <h2>🚀 FreeMobile VIP Engine يعمل بنجاح</h2>
-    </body>
-    </html>
-    """
-
-
-# ============================================================
-# VIP LINK & SESSION MANAGEMENT
-# ============================================================
+os.makedirs(SESSION_DIR, exist_ok=True)
 
 @app.route("/vip/<session_id>")
 def view_vip_session(session_id):
-    meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
     state_file = os.path.join(SESSION_DIR, f"{session_id}.json")
-
+    meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
+    
     if not os.path.exists(meta_file) or not os.path.exists(state_file):
-        return ("<h3>⚠️ الجلسة غير موجودة.</h3>", 404)
+        return "<h3>⚠️ هذه الجلسة غير موجودة أو انتهت صلاحيتها.</h3>", 404
 
     try:
         with open(meta_file, "r", encoding="utf-8") as f:
             metadata = json.load(f)
 
         number = metadata.get("number", "غير معروف")
-        open_url = f"{RENDER_EXTERNAL_URL}/vip/{session_id}/open"
 
-        html = f"""
+        html_content = f"""
         <!DOCTYPE html>
         <html lang="ar" dir="rtl">
         <head>
             <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>Free Mobile VIP</title>
+            <title>تم اختيار الرقم المميز بنجاح!</title>
             <style>
-                body {{ margin:0; background:#0f172a; color:white; font-family:Tahoma,Arial; text-align:center; padding:50px 15px; }}
-                .card {{ max-width:500px; margin:auto; background:#1e293b; padding:30px; border-radius:18px; box-shadow:0 15px 40px rgba(0,0,0,.45); }}
-                h1 {{ color:#38bdf8; }}
-                .number {{ color:#facc15; font-size:36px; font-weight:bold; margin:25px 0; direction:ltr; }}
-                .button {{ display:block; background:#10b981; color:white; text-decoration:none; padding:16px; border-radius:10px; font-size:18px; font-weight:bold; margin-top:25px; }}
-                .info {{ color:#cbd5e1; line-height:1.8; }}
+                body {{ font-family: Tahoma, sans-serif; background: #0f172a; color: white; text-align: center; padding-top: 100px; }}
+                .card {{ background: #1e293b; padding: 40px; border-radius: 12px; display: inline-block; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }}
+                h1 {{ color: #38bdf8; }}
+                .number {{ color: #facc15; font-size: 38px; font-weight: bold; margin: 20px 0; }}
+                .loader {{ border: 5px solid #334155; border-top: 5px solid #10b981; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 20px auto; }}
+                @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
             </style>
         </head>
         <body>
             <div class="card">
-                <h1>🔥 رقم VIP</h1>
+                <h1>🔥 تم تثبيت واختيار الرقم المميز!</h1>
                 <div class="number">{number}</div>
-                <div class="info">تم العثور على الرقم وحفظ جلسة Free Mobile.<br><br>اضغط لفتح جلسة الرقم.</div>
-                <a class="button" href="{open_url}">🚀 فتح جلسة Free Mobile</a>
+                <div class="loader"></div>
+                <p>جاري نقلك إلى موقع Free Mobile لتجد الرقم بانتظارك...</p>
             </div>
+            <script>
+                setTimeout(function() {{
+                    window.location.href = "https://mobile.free.fr/souscription/options";
+                }}, 1200);
+            </script>
         </body>
         </html>
         """
-        return html
+        
+        response = make_response(html_content)
+        response.set_cookie("vip_active_session", session_id, max_age=300)
+        return response
+
     except Exception as e:
-        return (f"<h3>❌ خطأ: {e}</h3>", 500)
+        return f"<h3>حدث خطأ أثناء تحميل الجلسة: {e}</h3>", 500
 
-
-@app.route("/vip/<session_id>/open")
-def open_vip_session(session_id):
-    meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
-    state_file = os.path.join(SESSION_DIR, f"{session_id}.json")
-
-    if not os.path.exists(meta_file) or not os.path.exists(state_file):
-        return ("<h3>❌ الجلسة غير موجودة.</h3>", 404)
-
-    try:
-        with open(meta_file, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
-        number = metadata.get("number", "")
-
-        with ACTIVE_SESSIONS_LOCK:
-            active = ACTIVE_SESSIONS.get(session_id)
-
-        if active and active.get("page") and not active.get("page").is_closed():
-            return f"<h2>🔥 جلسة الرقم مفتوحة</h2><h1 style='color:#facc15;direction:ltr;'>{number}</h1>"
-
-        with sync_playwright() as p:
-            launch_args = {"headless": True}
-            if PROXY_URL:
-                launch_args["proxy"] = {"server": PROXY_URL}
-
-            browser = p.chromium.launch(**launch_args)
-            context = browser.new_context(
-                storage_state=state_file,
-                user_agent=MOBILE_UA,
-                viewport={"width": 390, "height": 844},
-                device_scale_factor=3,
-                is_mobile=True,
-                has_touch=True,
-                locale="fr-FR"
-            )
-            page = context.new_page()
-            page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
-
-            with ACTIVE_SESSIONS_LOCK:
-                ACTIVE_SESSIONS[session_id] = {
-                    "browser": browser,
-                    "context": context,
-                    "page": page,
-                    "number": number,
-                    "created": time.time()
-                }
-
-            return f"<h2>🔥 تم فتح جلسة Free Mobile</h2><h1 style='color:#facc15;direction:ltr;'>{number}</h1>"
-    except Exception as e:
-        return (f"<h3>❌ خطأ: {e}</h3>", 500)
-
-
-# ============================================================
-# VIP EVALUATOR & HELPERS
-# ============================================================
+@app.route("/")
+def home():
+    return "<h3>🚀 FreeMobile VIP Engine يعمل في الخلفية بكفاءة عالية!</h3>"
 
 def evaluate_vip_expanded(num):
-    clean = str(num).replace(" ", "").replace("-", "").replace(".", "")
+    clean = str(num).replace(" ", "").replace("-", "")
     if not (len(clean) == 10 and (clean.startswith("06") or clean.startswith("07"))):
         return None
     d = clean[2:]
-    if len(set(d)) <= 4:
-        return "تنوع منخفض للأرقام"
-    if d == d[::-1]:
-        return "مرآة متناظرة كاملة"
-    if d[:4] == d[4:]:
-        return "نصفين متطابقين"
-    sequences = [
-        "0123", "1234", "2345", "3456", "4567",
-        "5678", "6789", "9876", "8765", "7654",
-        "6543", "5432", "4321", "3210"
-    ]
-    if any(seq in d for seq in sequences):
+
+    if len(set(d)) <= 4: return "تنوع منخفض للأرقام (مميز)"
+    if d == d[::-1]: return "مرآة متناظرة كاملة (Palindrome)"
+    if d[:4] == d[4:]: return "نصفين متطابقين تماماً"
+    
+    if any(seq in d for seq in ["0123", "1234", "2345", "3456", "4567", "5678", "6789", "9876", "8765", "7654", "6543", "5432", "4321", "3210"]):
         return "تسلسل أرقام متتالي"
-    if len(set(d[-4:])) <= 2 or len(set(d[:4])) <= 2:
-        return "تكرار عالي في الأطراف"
-    if d[0] == d[1] == d[2] or d[-3] == d[-2] == d[-1]:
-        return "ثلاثية متتالية"
+
+    if len(set(d[-4:])) <= 2 or len(set(d[:4])) <= 2: return "تكرار عالي في الأطراف"
+    if d[0] == d[1] == d[2] or d[-3] == d[-2] == d[-1]: return "ثلاثية متتالية"
+
     return None
 
-
-def select_number(page, number):
-    target = "".join(c for c in str(number) if c.isdigit())
-    try:
-        selects = page.locator("select")
-        for i in range(selects.count()):
-            sel = selects.nth(i)
-            options = sel.locator("option")
-            for j in range(options.count()):
-                combined = (options.nth(j).get_attribute("value") or "") + " " + (options.nth(j).inner_text() or "")
-                if target in "".join(c for c in combined if c.isdigit()):
-                    sel.select_option(index=j, force=True)
-                    time.sleep(0.5)
-                    return True
-    except Exception:
-        pass
-    return False
-
-
-def verify_number_on_page(page, number):
-    target = "".join(c for c in str(number) if c.isdigit())
-    try:
-        text = page.locator("body").inner_text(timeout=5000)
-        return target in "".join(c for c in text if c.isdigit())
-    except Exception:
-        return False
-
-
-def save_session_state(context, page, number):
+def save_vip_session(context, number):
     session_id = uuid.uuid4().hex
     safe_number = "".join(c for c in str(number) if c.isdigit())
+
     state_file = os.path.join(SESSION_DIR, f"{session_id}.json")
     meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
+
     try:
         context.storage_state(path=state_file, indexed_db=True)
+        metadata = {
+            "session_id": session_id,
+            "number": safe_number,
+            "created": int(time.time()),
+            "state_file": state_file
+        }
+
         with open(meta_file, "w", encoding="utf-8") as f:
-            json.dump({
-                "session_id": session_id,
-                "number": safe_number,
-                "created": int(time.time()),
-                "state_file": state_file
-            }, f)
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+        print(f"💾 [حفظ الجلسة] تم حفظ جلسة VIP للرقم: {safe_number}", flush=True)
         return session_id
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ فشل حفظ حالة الجلسة: {e}", flush=True)
         return None
 
-
 def send_telegram_alert(number, desc, session_id):
-    if not TELEGRAM_BOT_TOKEN or not CHAT_ID:
-        return
-    open_url = f"{RENDER_EXTERNAL_URL}/vip/{session_id}"
+    render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://freemobile-bot.onrender.com").rstrip("/")
+    open_url = f"{render_url}/vip/{session_id}"
+
     message = (
-        "🔥 *رقم VIP جديد!*\n\n"
+        "🔥 *رقم مميز VIP جديد (مختار تلقائياً)!*\n\n"
         f"📱 الرقم: `{number}`\n"
         f"💎 التصنيف: {desc}\n\n"
-        f"🔗 [فتح الجلسة]({open_url})"
+        f"🔗 [اضغط هنا للدخول وإتمام الشراء مباشرة]({open_url})"
     )
+
+    telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True
+    }
+
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={
-                "chat_id": CHAT_ID,
-                "text": message,
-                "parse_mode": "Markdown"
-            },
-            timeout=10
-        )
-    except Exception:
-        pass
-
-
-def request_new_ip_from_proxy():
-    if CHANGE_IP_API:
-        try:
-            requests.get(CHANGE_IP_API, timeout=10)
-            print("🔄 تم طلب IP جديد من مزود البروكسي بنجاح.", flush=True)
-            time.sleep(3)
-        except Exception as e:
-            print(f"⚠️ فشل تحديث الـ IP عبر الـ API: {e}", flush=True)
-
-
-# ============================================================
-# MONITOR LOOP (API BASED)
-# ============================================================
+        response = requests.post(telegram_url, json=payload, timeout=10)
+        if response.ok:
+            print("📨 تم إرسال تنبيه Telegram بنجاح", flush=True)
+        else:
+            print("⚠️ Telegram رفض الرسالة:", response.text, flush=True)
+    except Exception as e:
+        print(f"⚠️ خطأ إرسال Telegram: {e}", flush=True)
 
 def run_smart_proxy_monitor():
-    print("🚀 بدء محرك الفحص المتطور عبر الـ API...", flush=True)
+    print("🚀 بدء تشغيل محرك تدوير الجلسات وفحص الأرقام...", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
-
-    empty_scans_count = 0
 
     try:
         with sync_playwright() as p:
+            print("✅ [PLAYWRIGHT] تم تفعيل المتصفح السحابي بنجاح", flush=True)
             while True:
                 browser = None
-                context = None
-                page = None
-
                 try:
-                    if empty_scans_count >= 2:
-                        print("🔄 لم يتم العثور على أرقام متكررة، جاري تغيير الـ IP...", flush=True)
-                        request_new_ip_from_proxy()
-                        empty_scans_count = 0
-
-                    launch_args = {"headless": True}
-                    if PROXY_URL:
-                        launch_args["proxy"] = {"server": PROXY_URL}
-
-                    browser = p.chromium.launch(**launch_args)
+                    browser = p.chromium.launch(headless=True)
                     context = browser.new_context(
-                        user_agent=MOBILE_UA,
-                        viewport={"width": 390, "height": 844},
-                        device_scale_factor=3,
-                        is_mobile=True,
-                        has_touch=True,
-                        locale="fr-FR"
+                        user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
                     )
                     page = context.new_page()
-
-                    print("🌐 فتح صفحة Free Mobile...", flush=True)
-                    page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
-                    time.sleep(2)
-
-                    # جلب الأرقام مباشرة من الـ API الخاص بالموقع بدقة تامة
-                    matrix_val = random.random()
-                    api_full_url = f"{API_URL}?matrix={matrix_val}"
                     
-                    print(f"📡 جلب الأرقام من الـ API: {api_full_url}", flush=True)
-                    api_response = page.evaluate(f"""
-                        async () => {{
-                            try {{
-                                const res = await fetch("{api_full_url}");
-                                if (res.ok) {{
-                                    return await res.json();
-                                }}
-                            }} catch(e) {{}}
+                    page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
+                    time.sleep(1.0)
+
+                    # العودة للطريقة الصحيحة للـ API النسبي التي تتخطى الحماية
+                    numbers_data = page.evaluate("""
+                        async () => {
+                            try {
+                                const res = await fetch('./api/msisdns?' + Math.random(), {
+                                    headers: { 
+                                        'X-Requested-With': 'XMLHttpRequest',
+                                        'Cache-Control': 'no-cache'
+                                    }
+                                });
+                                if (res.ok) return await res.json();
+                            } catch (e) {}
                             return null;
-                        }}
+                        }
                     """)
 
-                    numbers_list = []
-                    if api_response and isinstance(api_response, list):
-                        for item in api_response:
-                            val = item.get("value") or item.get("label", "")
-                            clean_num = "".join(c for c in str(val) if c.isdigit())
-                            if len(clean_num) == 10:
-                                numbers_list.append(clean_num)
+                    if numbers_data:
+                        numbers_list = numbers_data if isinstance(numbers_data, list) else numbers_data.get("msisdns", [])
+                        if numbers_list:
+                            for item in numbers_list:
+                                num_val = item.get("value") if isinstance(item, dict) else str(item)
+                                if not num_val:
+                                    continue
 
-                    numbers_list = list(set(numbers_list))
+                                vip_desc = evaluate_vip_expanded(num_val)
+                                if vip_desc:
+                                    print(f"🔥🔥🔥 VIP FOUND! الرقم: {num_val} | التصنيف: {vip_desc}", flush=True)
+                                    
+                                    try:
+                                        page.evaluate(f"""
+                                            (targetNum) => {{
+                                                const radioNew = document.querySelector('input[value*="new"], input[id*="new"], input[name*="numero"]');
+                                                if (radioNew) {{
+                                                    radioNew.click();
+                                                    radioNew.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                                }}
+                                                
+                                                const selects = document.querySelectorAll('select');
+                                                selects.forEach(sel => {{
+                                                    for (let i = 0; i < sel.options.length; i++) {{
+                                                        let opt = sel.options[i];
+                                                        if (opt.value.includes(targetNum) || opt.text.includes(targetNum)) {{
+                                                            sel.selectedIndex = i;
+                                                            sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                                            sel.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                                        }}
+                                                    }}
+                                                }});
+                                            }}
+                                        """, num_val)
+                                        time.sleep(0.3)
+                                    except Exception as ex:
+                                        print(f"⚠️ خطأ في اختيار الرقم: {ex}", flush=True)
 
-                    if not numbers_list:
-                        print("⚠️ لم يتم جلب أي أرقام من الـ API، سيتم تغيير الـ IP...", flush=True)
-                        empty_scans_count += 1
-                        time.sleep(4)
-                        continue
-
-                    empty_scans_count = 0
-                    print(f"📊 عدد الأرقام المكتشفة عبر الـ API: {len(numbers_list)}", flush=True)
-
-                    found_vip = False
-                    for num_val in numbers_list:
-                        vip_desc = evaluate_vip_expanded(num_val)
-                        if not vip_desc:
-                            continue
-
-                        print(f"🔥🔥🔥 VIP FOUND: {num_val} | {vip_desc}", flush=True)
-
-                        if not select_number(page, num_val):
-                            continue
-                        time.sleep(1)
-                        if not verify_number_on_page(page, num_val):
-                            continue
-
-                        session_id = save_session_state(context, page, num_val)
-                        if not session_id:
-                            continue
-
-                        with ACTIVE_SESSIONS_LOCK:
-                            ACTIVE_SESSIONS[session_id] = {
-                                "browser": browser,
-                                "context": context,
-                                "page": page,
-                                "number": num_val,
-                                "created": time.time()
-                            }
-
-                        browser = None
-                        context = None
-                        page = None
-
-                        send_telegram_alert(num_val, vip_desc, session_id)
-                        found_vip = True
-                        break
-
-                    if not found_vip:
-                        print("ℹ️ الأرقام المتاحة عادية، الانتقال للدورة التالية...", flush=True)
-
+                                    session_id = save_vip_session(context, num_val)
+                                    if session_id:
+                                        send_telegram_alert(num_val, vip_desc, session_id)
+                                    break
+                    
+                    if browser:
+                        browser.close()
                 except Exception as e:
-                    print(f"⚠️ LOOP ERROR: {repr(e)}", flush=True)
-                    empty_scans_count += 1
-
-                finally:
-                    try:
-                        if page:
-                            page.close()
-                    except Exception:
-                        pass
-                    try:
-                        if context:
-                            context.close()
-                    except Exception:
-                        pass
-                    try:
-                        if browser:
-                            browser.close()
-                    except Exception:
-                        pass
-
-                time.sleep(random.uniform(3.0, 5.0))
-
-    except Exception as e:
-        print(f"❌ FATAL: {repr(e)}", flush=True)
-
-
-# ============================================================
-# CLEANUP & START
-# ============================================================
-
-def cleanup_sessions():
-    while True:
-        try:
-            now = time.time()
-            for filename in os.listdir(SESSION_DIR):
-                if not filename.endswith(".meta.json"):
-                    continue
-                meta_path = os.path.join(SESSION_DIR, filename)
-                with open(meta_path, "r", encoding="utf-8") as f:
-                    metadata = json.load(f)
-                if now - metadata.get("created", 0) > 1800:
-                    session_id = metadata.get("session_id")
-                    with ACTIVE_SESSIONS_LOCK:
-                        active = ACTIVE_SESSIONS.pop(session_id, None)
-                    if active:
+                    print(f"⚠️ [LOOP ERROR]: {e}", flush=True)
+                    if browser:
                         try:
-                            active["browser"].close()
+                            browser.close()
                         except Exception:
                             pass
-                    for suffix in [".meta.json", ".json", ".session.json"]:
-                        p_file = os.path.join(SESSION_DIR, f"{session_id}{suffix}")
-                        if os.path.exists(p_file):
-                            os.remove(p_file)
-        except Exception:
-            pass
-        time.sleep(300)
 
+                time.sleep(random.uniform(2.5, 4.5))
+    except Exception as e:
+        print(f"❌ خطأ فادح في المحرك: {e}", flush=True)
 
 monitor_started = False
 monitor_lock = threading.Lock()
@@ -468,10 +252,9 @@ def trigger_background_monitor():
     with monitor_lock:
         if not monitor_started:
             monitor_started = True
-            threading.Thread(target=run_smart_proxy_monitor, daemon=True).start()
-            threading.Thread(target=cleanup_sessions, daemon=True).start()
-            print("[SYSTEM] Monitor started", flush=True)
-
+            t = threading.Thread(target=run_smart_proxy_monitor, daemon=True)
+            t.start()
+            print("[SYSTEM] تم إطلاق محرك الفحص في الخلفية بنجاح!", flush=True)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
