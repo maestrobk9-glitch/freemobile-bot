@@ -4,9 +4,13 @@ import time
 import random
 import uuid
 import requests
-import threading
+import sys
+import multiprocessing
 from flask import Flask, jsonify, request, redirect, render_template_string, make_response
 from playwright.sync_api import sync_playwright
+
+# إجبار بايثون على طباعة السجلات فوراً دون تأخير
+sys.stdout.reconfigure(line_buffering=True)
 
 app = Flask(__name__)
 
@@ -152,12 +156,12 @@ def send_telegram_alert(number, desc, session_id):
         print(f"⚠️ خطأ إرسال Telegram: {e}", flush=True)
 
 def run_smart_proxy_monitor():
-    print("🚀 [MONITOR START] بدء تشغيل محرك تدوير الجلسات وفحص الأرقام...", flush=True)
+    print("🚀 [MONITOR PROCESS STARTED] بدء تشغيل محرك تدوير الجلسات وفحص الأرقام...", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/render/project/src/pw-browsers"
 
     try:
         with sync_playwright() as p:
-            print("✅ [PLAYWRIGHT] تم تفعيل المتصفح السحابي بنجاح", flush=True)
+            print("✅ [PLAYWRIGHT] تم تفعيل المتصفح السحابي بنجاح في الخلفية", flush=True)
             while True:
                 browser = None
                 try:
@@ -243,13 +247,14 @@ def run_smart_proxy_monitor():
 
                 time.sleep(random.uniform(2.5, 4.5))
     except Exception as e:
-        print(f"❌ خطأ فادح في المحرك: {e}", flush=True)
+        print(f"❌ خطأ فادح في محرك العمليات: {e}", flush=True)
 
-# إطلاق المحرك فور تشغيل السكربت كخيط مستقل (Daemon Thread) لضمان عدم توقفه أبداً
 if __name__ == "__main__":
-    t = threading.Thread(target=run_smart_proxy_monitor, daemon=True)
-    t.start()
-    print("[SYSTEM] تم بدء خيط الفحص الخلفي بنجاح تام!", flush=True)
-    
+    # تشغيل محرك الفحص كعملية مستقلة تماماً (Multiprocessing Process) لضمان العمل المستمر
+    p = multiprocessing.Process(target=run_smart_proxy_monitor)
+    p.daemon = True
+    p.start()
+    print("[SYSTEM] تم بدء عملية الفحص المستقلة في الخلفية بنجاح تام!", flush=True)
+
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
