@@ -78,7 +78,7 @@ def view_vip_session(session_id):
 
 @app.route("/")
 def home():
-    return "<h3>🚀 FreeMobile VIP Engine يعمل في الخلفية بكفاءة عالية!</h3>"
+    return "<h3>🚀 FreeMobile VIP Engine v80 يعمل في الخلفية بكفاءة عالية!</h3>"
 
 def evaluate_vip_expanded(num):
     clean = str(num).replace(" ", "").replace("-", "")
@@ -161,10 +161,10 @@ def run_smart_proxy_monitor():
             while True:
                 browser = None
                 try:
-                    # تم إضافة وسائط الحماية هنا ليعمل المتصفح بسلاسة على Render
+                    # تفعيل المتصفح بوسائط الأمان المناسبة للخوادم السحابية لمنع التجمّد
                     browser = p.chromium.launch(
                         headless=True,
-                        args=['--no-sandbox', '--disable-setuid-sandbox']
+                        args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
                     )
                     context = browser.new_context(
                         user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
@@ -172,8 +172,9 @@ def run_smart_proxy_monitor():
                     page = context.new_page()
                     
                     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
-                    time.sleep(1.0)
+                    time.sleep(1.5)
 
+                    # جلب الأرقام عبر الـ API النسبي لتجنب حظر الموقع
                     numbers_data = page.evaluate("""
                         async () => {
                             try {
@@ -221,7 +222,7 @@ def run_smart_proxy_monitor():
                                                         }}
                                                     }}
                                                 }});
-                                            }}
+                            }}
                                         """, num_val)
                                         time.sleep(0.3)
                                     except Exception as ex:
