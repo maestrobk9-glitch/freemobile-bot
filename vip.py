@@ -152,7 +152,7 @@ def send_telegram_alert(number, desc, session_id):
         print(f"⚠️ خطأ إرسال Telegram: {e}", flush=True)
 
 def run_smart_proxy_monitor():
-    print("🚀 بدء تشغيل محرك تدوير الجلسات وفحص الأرقام...", flush=True)
+    print("🚀 [MONITOR START] بدء تشغيل محرك تدوير الجلسات وفحص الأرقام...", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/render/project/src/pw-browsers"
 
     try:
@@ -245,19 +245,11 @@ def run_smart_proxy_monitor():
     except Exception as e:
         print(f"❌ خطأ فادح في المحرك: {e}", flush=True)
 
-monitor_started = False
-monitor_lock = threading.Lock()
-
-@app.before_request
-def trigger_background_monitor():
-    global monitor_started
-    with monitor_lock:
-        if not monitor_started:
-            monitor_started = True
-            t = threading.Thread(target=run_smart_proxy_monitor, daemon=True)
-            t.start()
-            print("[SYSTEM] تم إطلاق محرك الفحص في الخلفية بنجاح!", flush=True)
-
+# إطلاق المحرك فور تشغيل السكربت كخيط مستقل (Daemon Thread) لضمان عدم توقفه أبداً
 if __name__ == "__main__":
+    t = threading.Thread(target=run_smart_proxy_monitor, daemon=True)
+    t.start()
+    print("[SYSTEM] تم بدء خيط الفحص الخلفي بنجاح تام!", flush=True)
+    
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
