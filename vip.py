@@ -49,32 +49,36 @@ def view_vip_session(session_id):
             <meta charset="UTF-8">
             <title>تم اختيار الرقم المميز بنجاح!</title>
             <style>
-                body {{ font-family: Tahoma, sans-serif; background: #0f172a; color: white; text-align: center; padding-top: 100px; }}
-                .card {{ background: #1e293b; padding: 40px; border-radius: 12px; display: inline-block; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }}
-                h1 {{ color: #38bdf8; }}
-                .number {{ color: #facc15; font-size: 38px; font-weight: bold; margin: 20px 0; }}
-                .loader {{ border: 5px solid #334155; border-top: 5px solid #10b981; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 20px auto; }}
+                body {{ font-family: Tahoma, sans-serif; background: #0f172a; color: white; text-align: center; padding-top: 80px; }}
+                .card {{ background: #1e293b; padding: 30px; border-radius: 12px; display: inline-block; box-shadow: 0 10px 25px rgba(0,0,0,0.5); max-width: 450px; width: 90%; }}
+                h1 {{ color: #38bdf8; font-size: 22px; }}
+                .number {{ color: #facc15; font-size: 36px; font-weight: bold; margin: 15px 0; }}
+                .loader {{ border: 4px solid #334155; border-top: 4px solid #10b981; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 15px auto; }}
                 @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+                .btn {{ display: inline-block; margin-top: 15px; background: #10b981; color: white; padding: 12px 25px; border-radius: 6px; text-decoration: none; font-weight: bold; }}
             </style>
         </head>
         <body>
             <div class="card">
-                <h1>🔥 تم تثبيت واختيار الرقم المميز!</h1>
+                <h1>🔥 تم تجهيز الرقم المميز بنجاح!</h1>
                 <div class="number">{number}</div>
                 <div class="loader"></div>
-                <p>جاري نقلك إلى موقع Free Mobile لتجد الرقم بانتظارك...</p>
+                <p>جاري تحويلك وإعداد جلستك على موقع Free Mobile...</p>
+                <a href="https://mobile.free.fr/souscription/options" class="btn" id="goBtn">اضغط هنا إذا لم يتم تحويلك تلقائياً</a>
             </div>
             <script>
+                // حفظ رقم الجلسة في الكوكيز أو التخزين المحلي للمتصفح إن أمكن
+                localStorage.setItem("vip_last_number", "{number}");
                 setTimeout(function() {{
                     window.location.href = "https://mobile.free.fr/souscription/options";
-                }}, 1200);
+                }}, 1500);
             </script>
         </body>
         </html>
         """
         
         response = make_response(html_content)
-        response.set_cookie("vip_active_session", session_id, max_age=300)
+        response.set_cookie("vip_active_session", session_id, max_age=600)
         return response
 
     except Exception as e:
@@ -110,18 +114,22 @@ def save_vip_session(context, number):
     meta_file = os.path.join(SESSION_DIR, f"{session_id}.meta.json")
 
     try:
-        context.storage_state(path=state_file, indexed_db=True)
+        # حفظ حالة المتصفح بالكامل (Cookies + LocalStorage)
+        storage = context.storage_state()
         metadata = {
             "session_id": session_id,
             "number": safe_number,
             "created": int(time.time()),
-            "state_file": state_file
+            "storage_state": storage
         }
+
+        with open(state_file, "w", encoding="utf-8") as f:
+            json.dump(storage, f, ensure_ascii=False, indent=2)
 
         with open(meta_file, "w", encoding="utf-8") as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
 
-        print(f"💾 [حفظ الجلسة] تم حفظ جلسة VIP للرقم: {safe_number}", flush=True)
+        print(f"💾 [حفظ الجلسة] تم حفظ تفاصيل جلسة VIP بالكامل للرقم: {safe_number}", flush=True)
         return session_id
     except Exception as e:
         print(f"⚠️ فشل حفظ حالة الجلسة: {e}", flush=True)
@@ -132,10 +140,10 @@ def send_telegram_alert(number, desc, session_id):
     open_url = f"{render_url}/vip/{session_id}"
 
     message = (
-        "🔥 *رقم مميز VIP جديد (مختار تلقائياً)!*\n\n"
+        "🔥 *رقم مميز VIP جديد تم التقاطه!*\n\n"
         f"📱 الرقم: `{number}`\n"
         f"💎 التصنيف: {desc}\n\n"
-        f"🔗 [اضغط هنا للدخول وإتمام الشراء مباشرة]({open_url})"
+        f"🔗 [اضغط هنا لاختيار الرقم وإتمام الجلسة مباشرة]({open_url})"
     )
 
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -176,7 +184,24 @@ def run_smart_proxy_monitor():
                         page = context.new_page()
                         
                         page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
-                        time.sleep(1.5)
+                        time.sleep(2.0)
+
+                        # تفعيل خيار اختيار رقم جديد تلقائياً
+                        try:
+                            page.evaluate("""
+                                () => {
+                                    const radios = document.querySelectorAll('input[type="radio"]');
+                                    radios.forEach(r => {
+                                        if (r.id.includes('nouveau') || r.value.includes('nouveau') || r.name.includes('numero') || (r.parentNode && r.parentNode.textContent.includes('nouveau'))) {
+                                            r.click();
+                                            r.dispatchEvent(new Event('change', { bubbles: true }));
+                                        }
+                                    });
+                                }
+                            """)
+                            time.sleep(1.0)
+                        except Exception:
+                            pass
 
                         numbers_data = page.evaluate("""
                             async () => {
@@ -205,15 +230,10 @@ def run_smart_proxy_monitor():
                                     if vip_desc:
                                         print(f"🔥🔥🔥 VIP FOUND! الرقم: {num_val} | التصنيف: {vip_desc}", flush=True)
                                         
+                                        # محاولة اختيار الرقم وتثبيته في الصفحة قبل أخذ الـ State
                                         try:
                                             page.evaluate(f"""
                                                 (targetNum) => {{
-                                                    const radioNew = document.querySelector('input[value*="new"], input[id*="new"], input[name*="numero"]');
-                                                    if (radioNew) {{
-                                                        radioNew.click();
-                                                        radioNew.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                                                    }}
-                                                    
                                                     const selects = document.querySelectorAll('select');
                                                     selects.forEach(sel => {{
                                                         for (let i = 0; i < sel.options.length; i++) {{
@@ -227,7 +247,7 @@ def run_smart_proxy_monitor():
                                                     }});
                                                 }}
                                             """, num_val)
-                                            time.sleep(0.3)
+                                            time.sleep(0.5)
                                         except Exception as ex:
                                             print(f"⚠️ خطأ في اختيار الرقم: {ex}", flush=True)
 
@@ -251,7 +271,6 @@ def run_smart_proxy_monitor():
             print(f"❌ [PLAYWRIGHT RESTART ERROR]: {e}, إعادة المحاولة خلال 5 ثوانٍ...", flush=True)
             time.sleep(5)
 
-# تشغيل الخيط قبل بدء خادم Flask مباشرة لضمان العمل المستمر
 if __name__ == "__main__":
     t = threading.Thread(target=run_smart_proxy_monitor, daemon=True)
     t.start()
