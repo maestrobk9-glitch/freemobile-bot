@@ -153,7 +153,7 @@ def send_telegram_alert(number, desc, session_id):
 
 def run_smart_proxy_monitor():
     print("🚀 بدء تشغيل محرك تدوير الجلسات وفحص الأرقام...", flush=True)
-    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/render/project/src/pw-browsers"
 
     try:
         with sync_playwright() as p:
