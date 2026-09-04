@@ -1078,7 +1078,7 @@ def run_smart_monitor():
                         proxies_env = os.environ.get("PROXIES_LIST", "")
                         proxy_list = [x.strip() for x in proxies_env.split(",") if x.strip()]
                         if proxy_list:
-                            proxy = proxy_list[0]
+                            proxy = random.choice(proxy_list) # اختيار بروكسي عشوائي في كل دورة لتغيير الـ IP
 
                         launch_args = {
                             "headless": True,
