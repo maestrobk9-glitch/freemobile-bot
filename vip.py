@@ -78,7 +78,7 @@ def view_vip_session(session_id):
 
 @app.route("/")
 def home():
-    return "<h3>🚀 FreeMobile VIP Engine v80 يعمل في الخلفية بكفاءة عالية!</h3>"
+    return "<h3>🚀 FreeMobile VIP Ultimate Bot يعمل في الخلفية بكفاءة عالية!</h3>"
 
 def evaluate_vip_expanded(num):
     clean = str(num).replace(" ", "").replace("-", "")
@@ -161,7 +161,6 @@ def run_smart_proxy_monitor():
             while True:
                 browser = None
                 try:
-                    # تفعيل المتصفح بوسائط الأمان المناسبة للخوادم السحابية لمنع التجمّد
                     browser = p.chromium.launch(
                         headless=True,
                         args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
@@ -174,7 +173,6 @@ def run_smart_proxy_monitor():
                     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
                     time.sleep(1.5)
 
-                    # جلب الأرقام عبر الـ API النسبي لتجنب حظر الموقع
                     numbers_data = page.evaluate("""
                         async () => {
                             try {
@@ -222,7 +220,7 @@ def run_smart_proxy_monitor():
                                                         }}
                                                     }}
                                                 }});
-                            }}
+                                            }}
                                         """, num_val)
                                         time.sleep(0.3)
                                     except Exception as ex:
