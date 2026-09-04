@@ -4,12 +4,12 @@ import time
 import random
 import uuid
 import requests
+import threading
 import sys
-import multiprocessing
 from flask import Flask, jsonify, request, redirect, render_template_string, make_response
 from playwright.sync_api import sync_playwright
 
-# إجبار بايثون على طباعة السجلات فوراً دون تأخير
+# إجبار بايثون على إظهار السجلات فوراً
 sys.stdout.reconfigure(line_buffering=True)
 
 app = Flask(__name__)
@@ -156,105 +156,106 @@ def send_telegram_alert(number, desc, session_id):
         print(f"⚠️ خطأ إرسال Telegram: {e}", flush=True)
 
 def run_smart_proxy_monitor():
-    print("🚀 [MONITOR PROCESS STARTED] بدء تشغيل محرك تدوير الجلسات وفحص الأرقام...", flush=True)
+    print("🔥🔥🔥 [THREAD ACTIVE] بدأ محرك فحص الأرقام العمل فعلياً في الخلفية الآن!", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/render/project/src/pw-browsers"
 
-    try:
-        with sync_playwright() as p:
-            print("✅ [PLAYWRIGHT] تم تفعيل المتصفح السحابي بنجاح في الخلفية", flush=True)
-            while True:
-                browser = None
-                try:
-                    browser = p.chromium.launch(
-                        headless=True,
-                        args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-                    )
-                    context = browser.new_context(
-                        user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
-                    )
-                    page = context.new_page()
-                    
-                    page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
-                    time.sleep(1.5)
+    while True:
+        try:
+            with sync_playwright() as p:
+                print("✅ [PLAYWRIGHT] تم تشغيل المتصفح بنجاح، جاري فحص الموقع...", flush=True)
+                while True:
+                    browser = None
+                    try:
+                        browser = p.chromium.launch(
+                            headless=True,
+                            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+                        )
+                        context = browser.new_context(
+                            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
+                        )
+                        page = context.new_page()
+                        
+                        page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=25000)
+                        time.sleep(1.5)
 
-                    numbers_data = page.evaluate("""
-                        async () => {
-                            try {
-                                const res = await fetch('./api/msisdns?' + Math.random(), {
-                                    headers: { 
-                                        'X-Requested-With': 'XMLHttpRequest',
-                                        'Cache-Control': 'no-cache'
-                                    }
-                                });
-                                if (res.ok) return await res.json();
-                            } catch (e) {}
-                            return null;
-                        }
-                    """)
+                        numbers_data = page.evaluate("""
+                            async () => {
+                                try {
+                                    const res = await fetch('./api/msisdns?' + Math.random(), {
+                                        headers: { 
+                                            'X-Requested-With': 'XMLHttpRequest',
+                                            'Cache-Control': 'no-cache'
+                                        }
+                                    });
+                                    if (res.ok) return await res.json();
+                                } catch (e) {}
+                                return null;
+                            }
+                        """)
 
-                    if numbers_data:
-                        numbers_list = numbers_data if isinstance(numbers_data, list) else numbers_data.get("msisdns", [])
-                        if numbers_list:
-                            for item in numbers_list:
-                                num_val = item.get("value") if isinstance(item, dict) else str(item)
-                                if not num_val:
-                                    continue
+                        if numbers_data:
+                            numbers_list = numbers_data if isinstance(numbers_data, list) else numbers_data.get("msisdns", [])
+                            if numbers_list:
+                                for item in numbers_list:
+                                    num_val = item.get("value") if isinstance(item, dict) else str(item)
+                                    if not num_val:
+                                        continue
 
-                                vip_desc = evaluate_vip_expanded(num_val)
-                                if vip_desc:
-                                    print(f"🔥🔥🔥 VIP FOUND! الرقم: {num_val} | التصنيف: {vip_desc}", flush=True)
-                                    
-                                    try:
-                                        page.evaluate(f"""
-                                            (targetNum) => {{
-                                                const radioNew = document.querySelector('input[value*="new"], input[id*="new"], input[name*="numero"]');
-                                                if (radioNew) {{
-                                                    radioNew.click();
-                                                    radioNew.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                                                }}
-                                                
-                                                const selects = document.querySelectorAll('select');
-                                                selects.forEach(sel => {{
-                                                    for (let i = 0; i < sel.options.length; i++) {{
-                                                        let opt = sel.options[i];
-                                                        if (opt.value.includes(targetNum) || opt.text.includes(targetNum)) {{
-                                                            sel.selectedIndex = i;
-                                                            sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                                                            sel.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                                                        }}
+                                    vip_desc = evaluate_vip_expanded(num_val)
+                                    if vip_desc:
+                                        print(f"🔥🔥🔥 VIP FOUND! الرقم: {num_val} | التصنيف: {vip_desc}", flush=True)
+                                        
+                                        try:
+                                            page.evaluate(f"""
+                                                (targetNum) => {{
+                                                    const radioNew = document.querySelector('input[value*="new"], input[id*="new"], input[name*="numero"]');
+                                                    if (radioNew) {{
+                                                        radioNew.click();
+                                                        radioNew.dispatchEvent(new Event('change', {{ bubbles: true }}));
                                                     }}
-                                                }});
-                                            }}
-                                        """, num_val)
-                                        time.sleep(0.3)
-                                    except Exception as ex:
-                                        print(f"⚠️ خطأ في اختيار الرقم: {ex}", flush=True)
+                                                    
+                                                    const selects = document.querySelectorAll('select');
+                                                    selects.forEach(sel => {{
+                                                        for (let i = 0; i < sel.options.length; i++) {{
+                                                            let opt = sel.options[i];
+                                                            if (opt.value.includes(targetNum) || opt.text.includes(targetNum)) {{
+                                                                sel.selectedIndex = i;
+                                                                sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                                                                sel.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                                            }}
+                                                        }}
+                                                    }});
+                                                }}
+                                            """, num_val)
+                                            time.sleep(0.3)
+                                        except Exception as ex:
+                                            print(f"⚠️ خطأ في اختيار الرقم: {ex}", flush=True)
 
-                                    session_id = save_vip_session(context, num_val)
-                                    if session_id:
-                                        send_telegram_alert(num_val, vip_desc, session_id)
-                                    break
-                    
-                    if browser:
-                        browser.close()
-                except Exception as e:
-                    print(f"⚠️ [LOOP ERROR]: {e}", flush=True)
-                    if browser:
-                        try:
+                                        session_id = save_vip_session(context, num_val)
+                                        if session_id:
+                                            send_telegram_alert(num_val, vip_desc, session_id)
+                                        break
+                        
+                        if browser:
                             browser.close()
-                        except Exception:
-                            pass
+                    except Exception as e:
+                        print(f"⚠️ [LOOP ERROR]: {e}", flush=True)
+                        if browser:
+                            try:
+                                browser.close()
+                            except Exception:
+                                pass
 
-                time.sleep(random.uniform(2.5, 4.5))
-    except Exception as e:
-        print(f"❌ خطأ فادح في محرك العمليات: {e}", flush=True)
+                    time.sleep(random.uniform(2.5, 4.5))
+        except Exception as e:
+            print(f"❌ [PLAYWRIGHT RESTART ERROR]: {e}, إعادة المحاولة خلال 5 ثوانٍ...", flush=True)
+            time.sleep(5)
 
+# تشغيل الخيط قبل بدء خادم Flask مباشرة لضمان العمل المستمر
 if __name__ == "__main__":
-    # تشغيل محرك الفحص كعملية مستقلة تماماً (Multiprocessing Process) لضمان العمل المستمر
-    p = multiprocessing.Process(target=run_smart_proxy_monitor)
-    p.daemon = True
-    p.start()
-    print("[SYSTEM] تم بدء عملية الفحص المستقلة في الخلفية بنجاح تام!", flush=True)
+    t = threading.Thread(target=run_smart_proxy_monitor, daemon=True)
+    t.start()
+    print("[SYSTEM] تم إطلاق خيط الخلفية بنجاح، جاري تشغيل سيرفر الويب...", flush=True)
 
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
