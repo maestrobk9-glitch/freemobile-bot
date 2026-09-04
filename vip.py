@@ -29,6 +29,7 @@ PROXY_URL = os.environ.get("PROXY_URL", "")
 CHANGE_IP_API = os.environ.get("CHANGE_IP_API", "")
 
 TARGET_URL = "https://mobile.free.fr/souscription/options"
+API_URL = "https://mobile.free.fr/souscription/api/msisdns"
 
 RENDER_EXTERNAL_URL = os.environ.get(
     "RENDER_EXTERNAL_URL",
@@ -284,11 +285,11 @@ def request_new_ip_from_proxy():
 
 
 # ============================================================
-# MONITOR LOOP
+# MONITOR LOOP (API BASED)
 # ============================================================
 
 def run_smart_proxy_monitor():
-    print("🚀 بدء محرك الفحص المتطور...", flush=True)
+    print("🚀 بدء محرك الفحص المتطور عبر الـ API...", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 
     empty_scans_count = 0
@@ -323,36 +324,43 @@ def run_smart_proxy_monitor():
 
                     print("🌐 فتح صفحة Free Mobile...", flush=True)
                     page.goto(TARGET_URL, wait_until="domcontentloaded", timeout=30000)
-                    time.sleep(4)
+                    time.sleep(2)
 
-                    numbers_list = page.evaluate("""
-                        () => {
-                            let results = [];
-                            const elements = document.querySelectorAll('select option, div, span, option');
-                            elements.forEach(el => {
-                                let text = el.innerText || el.value || '';
-                                const matches = text.match(/0[67][\\s\\d\\.]{8,}/g);
-                                if (matches) {
-                                    matches.forEach(m => {
-                                        let cleanNum = m.replace(/\\D/g, '');
-                                        if (cleanNum.length === 10) {
-                                            results.push(cleanNum);
-                                        }
-                                    });
-                                }
-                            });
-                            return [...new Set(results)];
-                        }
+                    # جلب الأرقام مباشرة من الـ API الخاص بالموقع بدقة تامة
+                    matrix_val = random.random()
+                    api_full_url = f"{API_URL}?matrix={matrix_val}"
+                    
+                    print(f"📡 جلب الأرقام من الـ API: {api_full_url}", flush=True)
+                    api_response = page.evaluate(f"""
+                        async () => {{
+                            try {{
+                                const res = await fetch("{api_full_url}");
+                                if (res.ok) {{
+                                    return await res.json();
+                                }}
+                            }} catch(e) {{}}
+                            return null;
+                        }}
                     """)
 
+                    numbers_list = []
+                    if api_response and isinstance(api_response, list):
+                        for item in api_response:
+                            val = item.get("value") or item.get("label", "")
+                            clean_num = "".join(c for c in str(val) if c.isdigit())
+                            if len(clean_num) == 10:
+                                numbers_list.append(clean_num)
+
+                    numbers_list = list(set(numbers_list))
+
                     if not numbers_list:
-                        print("⚠️ لم يتم العثور على أرقام في الصفحة، سيتم تغيير الـ IP...", flush=True)
+                        print("⚠️ لم يتم جلب أي أرقام من الـ API، سيتم تغيير الـ IP...", flush=True)
                         empty_scans_count += 1
                         time.sleep(4)
                         continue
 
                     empty_scans_count = 0
-                    print(f"📊 عدد الأرقام المكتشفة: {len(numbers_list)}", flush=True)
+                    print(f"📊 عدد الأرقام المكتشفة عبر الـ API: {len(numbers_list)}", flush=True)
 
                     found_vip = False
                     for num_val in numbers_list:
