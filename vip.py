@@ -54,6 +54,34 @@ MAX_DELAY = 4.5
 
 
 # ============================================================
+# AUTO PROXY FETCHER
+# ============================================================
+
+def fetch_fresh_proxies():
+    """جلب بروكسيات فرنسية مجانية وحية تلقائياً من الإنترنت"""
+    try:
+        # استخدام مصادر عامة وموثوقة لجلب بروكسيات بصيغة IP:Port
+        res = requests.get(
+            "https://api.geonode.com/proxies?limit=10&format=json&country=FR&protocols=http",
+            timeout=10
+        )
+        if res.status_code == 200:
+            data = res.json().get("data", [])
+            proxies = []
+            for p in data:
+                ip = p.get("ip")
+                port = p.get("port")
+                if ip and port:
+                    proxies.append(f"http://{ip}:{port}")
+            if proxies:
+                print(f"🌐 [PROXY] تم جلب {len(proxies)} بروكسي فرنسي بنجاح", flush=True)
+                return proxies
+    except Exception as e:
+        print(f"⚠️ [PROXY FETCH ERROR] {repr(e)}", flush=True)
+    return []
+
+
+# ============================================================
 # REMOTE SESSIONS
 # ============================================================
 
@@ -865,7 +893,7 @@ def home():
     <head><meta charset="UTF-8"><title>Free Mobile VIP Bot</title></head>
     <body style="font-family:Arial;text-align:center;padding:50px;">
     <h2>🚀 Free Mobile VIP Bot</h2>
-    <p>🟢 Bot يعمل</p>
+    <p>🟢 Bot يعمل مع التدوير التلقائي للبروكسي</p>
     </body>
     </html>
     """
@@ -1065,6 +1093,9 @@ def run_smart_monitor():
     print("🔥🔥🔥 [THREAD ACTIVE] محرك الفحص بدأ", flush=True)
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/render/project/src/pw-browsers"
 
+    current_proxies = []
+    proxy_refresh_time = 0
+
     while True:
         browser = None
         try:
@@ -1074,11 +1105,14 @@ def run_smart_monitor():
                     context = None
                     page = None
                     try:
+                        # تحديث قائمة البروكسيات تلقائياً كل 10 دقائق
+                        if time.time() - proxy_refresh_time > 600 or not current_proxies:
+                            current_proxies = fetch_fresh_proxies()
+                            proxy_refresh_time = time.time()
+
                         proxy = None
-                        proxies_env = os.environ.get("PROXIES_LIST", "")
-                        proxy_list = [x.strip() for x in proxies_env.split(",") if x.strip()]
-                        if proxy_list:
-                            proxy = random.choice(proxy_list) # اختيار بروكسي عشوائي في كل دورة لتغيير الـ IP
+                        if current_proxies:
+                            proxy = random.choice(current_proxies)
 
                         launch_args = {
                             "headless": True,
@@ -1110,11 +1144,14 @@ def run_smart_monitor():
 
                         if isinstance(api_result, dict) and api_result.get("error"):
                             err = str(api_result["error"])
-                            print(f"⚠️ [API ERROR] {err}", flush=True)
+                            print(f"⚠️ [API ERROR] {err} (البروكسي المستخدم: {proxy})", flush=True)
+                            # إذا فشل البروكسي الحالي، نقوم بحذفه فوراً من القائمة ليتم اختيار غيره
+                            if proxy and proxy in current_proxies:
+                                current_proxies.remove(proxy)
                             if "429" in err:
-                                time.sleep(random.uniform(15, 30))
-                            else:
                                 time.sleep(random.uniform(5, 10))
+                            else:
+                                time.sleep(random.uniform(3, 6))
                         else:
                             status = api_result.get("status")
                             data = api_result.get("data")
@@ -1126,7 +1163,7 @@ def run_smart_monitor():
                             elif isinstance(data, dict):
                                 numbers_list = data.get("msisdns", [])
 
-                            print(f"📱 [API] HTTP={status} | عدد الأرقام: {len(numbers_list)}", flush=True)
+                            print(f"📱 [API] HTTP={status} | عدد الأرقام: {len(numbers_list)} | البروكسي: {proxy}", flush=True)
 
                             if not numbers_list and raw:
                                 print(f"📄 [API RAW] {raw[:300]}", flush=True)
