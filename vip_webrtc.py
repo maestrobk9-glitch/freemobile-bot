@@ -1,4 +1,11 @@
 import os
+
+# IMPORTANT: Render was previously pointing Playwright at /opt/render/project/src/pw-browsers.
+# Force the official Playwright Docker browser directory before importing Playwright.
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/ms-playwright"
+os.environ.setdefault("PLAYWRIGHT_SKIP_BROWSER_GC", "1")
+os.environ.setdefault("DISPLAY", ":99")
+
 import json
 import time
 import random
@@ -658,7 +665,6 @@ def home():
 
 def run_smart_monitor():
     print('🔥🔥🔥 [THREAD ACTIVE] محرك الفحص بدأ', flush=True)
-    os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '/opt/render/project/src/pw-browsers'
     current_proxies = []
     proxy_refresh_time = 0
     while True:
@@ -680,6 +686,18 @@ def run_smart_monitor():
                 }
                 if proxy:
                     launch_args['proxy'] = {'server': proxy}
+                browser_path = p.chromium.executable_path
+                print(
+                    f'🔎 [PLAYWRIGHT] browsers_path={os.environ.get("PLAYWRIGHT_BROWSERS_PATH")} '
+                    f'chromium={browser_path} exists={os.path.exists(browser_path)}',
+                    flush=True
+                )
+                if not os.path.exists(browser_path):
+                    raise RuntimeError(
+                        f"Chromium غير موجود في {browser_path}. "
+                        "تأكد من تشغيل: PLAYWRIGHT_BROWSERS_PATH=/ms-playwright "
+                        "playwright install chromium داخل Docker."
+                    )
                 print(f'🚀 [BROWSER] تشغيل Chromium GUI/WebRTC | البروكسي: {proxy}', flush=True)
                 browser = p.chromium.launch(**launch_args)
                 context = browser.new_context(
@@ -704,13 +722,33 @@ def run_smart_monitor():
                             current_proxies.remove(proxy)
                         time.sleep(random.uniform(5,10) if '429' in err else random.uniform(3,6)); break
                     status = api_result.get('status'); data = api_result.get('data'); raw = api_result.get('raw','')
-                    numbers_list = data if isinstance(data,list) else (data.get('msisdns',[]) if isinstance(data,dict) else [])
+                    if isinstance(data, list):
+                        numbers_list = data
+                    elif isinstance(data, dict):
+                        numbers_list = (
+                            data.get('msisdns')
+                            or data.get('numbers')
+                            or data.get('data')
+                            or []
+                        )
+                    else:
+                        numbers_list = []
+                    if not isinstance(numbers_list, list):
+                        numbers_list = []
                     print(f'📱 [API] HTTP={status} | عدد الأرقام: {len(numbers_list)} | البروكسي: {proxy}', flush=True)
                     if not numbers_list and raw:
                         print(f'📄 [API RAW] {raw[:300]}', flush=True)
                     found = False
                     for item in numbers_list:
-                        number = item.get('value') if isinstance(item,dict) else str(item)
+                        if isinstance(item, dict):
+                            number = (
+                                item.get('value')
+                                or item.get('msisdn')
+                                or item.get('number')
+                                or item.get('phone')
+                            )
+                        else:
+                            number = str(item)
                         if not number:
                             continue
                         desc = evaluate_vip_expanded(number)
