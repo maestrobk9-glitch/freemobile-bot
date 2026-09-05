@@ -25,32 +25,15 @@ except Exception:
 
 app = Flask(__name__)
 
-TELEGRAM_BOT_TOKEN = os.environ.get(
-    "TELEGRAM_BOT_TOKEN",
-    ""
-)
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+CHAT_ID = os.environ.get("CHAT_ID", "")
 
-CHAT_ID = os.environ.get(
-    "CHAT_ID",
-    ""
-)
-
-TARGET_URL = (
-    "https://mobile.free.fr/"
-    "souscription/options"
-)
+TARGET_URL = "https://mobile.free.fr/souscription/options"
 
 SESSION_DIR = "vip_sessions"
+os.makedirs(SESSION_DIR, exist_ok=True)
 
-os.makedirs(
-    SESSION_DIR,
-    exist_ok=True
-)
-
-# ============================================================
-# REMOTE SESSION = 5 MINUTES
-# ============================================================
-
+# Remote Browser session = 5 minutes
 REMOTE_SESSION_TIMEOUT = 5 * 60
 
 MIN_DELAY = 2.5
@@ -78,9 +61,7 @@ def fetch_fresh_proxies():
                 port = p.get("port")
 
                 if ip and port:
-                    proxies.append(
-                        f"http://{ip}:{port}"
-                    )
+                    proxies.append(f"http://{ip}:{port}")
 
             if proxies:
                 print(
@@ -90,10 +71,7 @@ def fetch_fresh_proxies():
                 return proxies
 
     except Exception as e:
-        print(
-            f"⚠️ [PROXY FETCH ERROR] {repr(e)}",
-            flush=True
-        )
+        print(f"⚠️ [PROXY FETCH ERROR] {repr(e)}", flush=True)
 
     return []
 
@@ -103,14 +81,11 @@ def fetch_fresh_proxies():
 # ============================================================
 
 LIVE_SESSIONS = {}
-
 LIVE_SESSIONS_LOCK = threading.Lock()
 
 
 def create_live_session(number):
-
     session_id = uuid.uuid4().hex
-
     token = secrets.token_urlsafe(32)
 
     data = {
@@ -123,38 +98,23 @@ def create_live_session(number):
     }
 
     with LIVE_SESSIONS_LOCK:
-
-        LIVE_SESSIONS[
-            session_id
-        ] = data
+        LIVE_SESSIONS[session_id] = data
 
     return data
 
 
 def get_live_session(session_id):
-
     with LIVE_SESSIONS_LOCK:
-
-        return LIVE_SESSIONS.get(
-            session_id
-        )
+        return LIVE_SESSIONS.get(session_id)
 
 
 def remove_live_session(session_id):
-
     with LIVE_SESSIONS_LOCK:
-
-        LIVE_SESSIONS.pop(
-            session_id,
-            None
-        )
+        LIVE_SESSIONS.pop(session_id, None)
 
 
 def token_valid(session_id):
-
-    session = get_live_session(
-        session_id
-    )
+    session = get_live_session(session_id)
 
     if not session:
         return None
@@ -165,37 +125,22 @@ def token_valid(session_id):
     )
 
     if not supplied:
-
         try:
-
-            body = (
-                request.get_json(
-                    silent=True
-                )
-                or {}
-            )
-
-            supplied = body.get(
-                "token"
-            )
-
+            body = request.get_json(silent=True) or {}
+            supplied = body.get("token")
         except Exception:
-
             supplied = None
 
     if not supplied:
         return None
 
     try:
-
         if not secrets.compare_digest(
             str(supplied),
             str(session["token"])
         ):
             return None
-
     except Exception:
-
         return None
 
     return session
@@ -212,27 +157,16 @@ def send_remote_command(
     payload=None,
     timeout=10
 ):
-
-    session = get_live_session(
-        session_id
-    )
+    session = get_live_session(session_id)
 
     if not session:
-
-        return {
-            "ok": False,
-            "error": "SESSION_NOT_FOUND"
-        }
+        return {"ok": False, "error": "SESSION_NOT_FOUND"}
 
     if not secrets.compare_digest(
         str(token),
         str(session["token"])
     ):
-
-        return {
-            "ok": False,
-            "error": "INVALID_TOKEN"
-        }
+        return {"ok": False, "error": "INVALID_TOKEN"}
 
     event = threading.Event()
 
@@ -243,471 +177,189 @@ def send_remote_command(
         "result": None
     }
 
-    session["queue"].put(
-        command_data
-    )
+    session["queue"].put(command_data)
 
     if not event.wait(timeout):
+        return {"ok": False, "error": "COMMAND_TIMEOUT"}
 
-        return {
-            "ok": False,
-            "error": "COMMAND_TIMEOUT"
-        }
-
-    return (
-        command_data.get(
-            "result"
-        )
-        or
-        {
-            "ok": False,
-            "error": "NO_RESULT"
-        }
-    )
+    return command_data.get("result") or {
+        "ok": False,
+        "error": "NO_RESULT"
+    }
 
 
 # ============================================================
 # PLAYWRIGHT COMMAND PROCESSOR
 # ============================================================
 
-def process_remote_commands(
-    page,
-    session
-):
-
+def process_remote_commands(page, session):
     processed = 0
 
     while processed < 10:
-
         try:
-
-            command_data = (
-                session["queue"]
-                .get_nowait()
-            )
-
+            command_data = session["queue"].get_nowait()
         except queue.Empty:
-
             break
 
         processed += 1
-
-        command = command_data[
-            "command"
-        ]
-
-        payload = command_data.get(
-            "payload",
-            {}
-        )
+        command = command_data["command"]
+        payload = command_data.get("payload", {})
 
         try:
-
-            # ------------------------------------------------
-            # SCREEN
-            # ------------------------------------------------
-
             if command == "screen":
-
                 image = page.screenshot(
                     type="jpeg",
                     quality=72
                 )
-
                 command_data["result"] = {
                     "ok": True,
                     "image": image
                 }
 
-            # ------------------------------------------------
-            # CLICK
-            # ------------------------------------------------
-
-            elif command == "click":
-
-                x = float(
-                    payload.get(
-                        "x",
-                        0
-                    )
-                )
-
-                y = float(
-                    payload.get(
-                        "y",
-                        0
-                    )
-                )
+            elif command in ("click", "dblclick"):
+                x = float(payload.get("x", 0))
+                y = float(payload.get("y", 0))
 
                 display_width = float(
-                    payload.get(
-                        "display_width",
-                        390
-                    )
+                    payload.get("display_width", 390)
                 )
-
                 display_height = float(
-                    payload.get(
-                        "display_height",
-                        844
-                    )
+                    payload.get("display_height", 844)
                 )
 
-                viewport = (
-                    page.viewport_size
-                    or
-                    {
-                        "width": 390,
-                        "height": 844
-                    }
-                )
-
-                real_x = (
-                    x
-                    *
-                    viewport["width"]
-                    /
-                    display_width
-                )
-
-                real_y = (
-                    y
-                    *
-                    viewport["height"]
-                    /
-                    display_height
-                )
-
-                page.mouse.click(
-                    real_x,
-                    real_y
-                )
-
-                command_data["result"] = {
-                    "ok": True
+                viewport = page.viewport_size or {
+                    "width": 390,
+                    "height": 844
                 }
 
-            # ------------------------------------------------
-            # DOUBLE CLICK
-            # ------------------------------------------------
-
-            elif command == "dblclick":
-
-                x = float(
-                    payload.get(
-                        "x",
-                        0
-                    )
-                )
-
-                y = float(
-                    payload.get(
-                        "y",
-                        0
-                    )
-                )
-
-                display_width = float(
-                    payload.get(
-                        "display_width",
-                        390
-                    )
-                )
-
-                display_height = float(
-                    payload.get(
-                        "display_height",
-                        844
-                    )
-                )
-
-                viewport = (
-                    page.viewport_size
-                    or
-                    {
-                        "width": 390,
-                        "height": 844
-                    }
-                )
-
                 real_x = (
-                    x
-                    *
-                    viewport["width"]
-                    /
-                    display_width
+                    x * viewport["width"] / display_width
                 )
-
                 real_y = (
-                    y
-                    *
-                    viewport["height"]
-                    /
-                    display_height
+                    y * viewport["height"] / display_height
                 )
 
-                page.mouse.dblclick(
-                    real_x,
-                    real_y
-                )
+                if command == "dblclick":
+                    page.mouse.dblclick(real_x, real_y)
+                else:
+                    page.mouse.click(real_x, real_y)
 
-                command_data["result"] = {
-                    "ok": True
-                }
-
-            # ------------------------------------------------
-            # WHEEL / SCROLL
-            # ------------------------------------------------
+                command_data["result"] = {"ok": True}
 
             elif command == "wheel":
+                dx = float(payload.get("dx", 0))
+                dy = float(payload.get("dy", 0))
 
-                dx = float(
-                    payload.get(
-                        "dx",
-                        0
-                    )
-                )
+                page.mouse.wheel(dx, dy)
 
-                dy = float(
-                    payload.get(
-                        "dy",
-                        0
-                    )
-                )
-
-                page.mouse.wheel(
-                    dx,
-                    dy
-                )
-
-                command_data["result"] = {
-                    "ok": True
-                }
-
-            # ------------------------------------------------
-            # TYPE
-            # ------------------------------------------------
+                command_data["result"] = {"ok": True}
 
             elif command == "type":
-
-                text = str(
-                    payload.get(
-                        "text",
-                        ""
-                    )
-                )
+                text = str(payload.get("text", ""))
 
                 if text:
+                    page.keyboard.insert_text(text)
 
-                    page.keyboard.insert_text(
-                        text
-                    )
-
-                command_data["result"] = {
-                    "ok": True
-                }
-
-            # ------------------------------------------------
-            # KEY
-            # ------------------------------------------------
+                command_data["result"] = {"ok": True}
 
             elif command == "key":
+                key = str(payload.get("key", ""))
 
-                key = str(
-                    payload.get(
-                        "key",
-                        ""
-                    )
-                )
-
-                ctrl = bool(
-                    payload.get(
-                        "ctrl",
-                        False
-                    )
-                )
-
-                shift = bool(
-                    payload.get(
-                        "shift",
-                        False
-                    )
-                )
-
-                alt = bool(
-                    payload.get(
-                        "alt",
-                        False
-                    )
-                )
-
-                meta = bool(
-                    payload.get(
-                        "meta",
-                        False
-                    )
-                )
+                ctrl = bool(payload.get("ctrl", False))
+                shift = bool(payload.get("shift", False))
+                alt = bool(payload.get("alt", False))
+                meta = bool(payload.get("meta", False))
 
                 modifiers = []
 
                 if ctrl:
-                    modifiers.append(
-                        "Control"
-                    )
-
+                    modifiers.append("Control")
                 if shift:
-                    modifiers.append(
-                        "Shift"
-                    )
-
+                    modifiers.append("Shift")
                 if alt:
-                    modifiers.append(
-                        "Alt"
-                    )
-
+                    modifiers.append("Alt")
                 if meta:
-                    modifiers.append(
-                        "Meta"
-                    )
+                    modifiers.append("Meta")
 
-                if (
-                    len(key) == 1
-                    and not modifiers
-                ):
-
-                    page.keyboard.insert_text(
-                        key
-                    )
-
+                if len(key) == 1 and not modifiers:
+                    page.keyboard.insert_text(key)
                 else:
+                    combo = "+".join(modifiers + [key])
+                    page.keyboard.press(combo)
 
-                    combo = "+".join(
-                        modifiers + [key]
-                    )
-
-                    page.keyboard.press(
-                        combo
-                    )
-
-                command_data["result"] = {
-                    "ok": True
-                }
-
-            # ------------------------------------------------
-            # RELOAD
-            # ------------------------------------------------
+                command_data["result"] = {"ok": True}
 
             elif command == "reload":
-
                 page.reload(
                     wait_until="domcontentloaded",
                     timeout=25000
                 )
-
                 time.sleep(1)
-
-                command_data["result"] = {
-                    "ok": True
-                }
-
-            # ------------------------------------------------
-            # CLOSE
-            # ------------------------------------------------
+                command_data["result"] = {"ok": True}
 
             elif command == "close":
-
                 session["closed"] = True
-
-                command_data["result"] = {
-                    "ok": True
-                }
+                command_data["result"] = {"ok": True}
 
             else:
-
                 command_data["result"] = {
                     "ok": False,
                     "error": "UNKNOWN_COMMAND"
                 }
 
         except Exception as e:
-
             command_data["result"] = {
                 "ok": False,
                 "error": repr(e)
             }
 
         finally:
-
-            command_data[
-                "event"
-            ].set()
+            command_data["event"].set()
 
 
 # ============================================================
 # REMOTE BROWSER PAGE
+# IMPORTANT:
+# This uses a normal string + replace(), NOT an f-string.
+# Therefore JavaScript/CSS braces cannot cause the old
+# "single '}' is not allowed" SyntaxError.
 # ============================================================
 
 @app.route("/vip/<session_id>")
 def remote_page(session_id):
-
-    session = get_live_session(
-        session_id
-    )
+    session = get_live_session(session_id)
 
     if not session:
+        return """
+        <h2 style="font-family:Arial;text-align:center">
+        ⚠️ انتهت جلسة Remote Browser
+        </h2>
+        """, 404
 
-        return (
-            """
-            <h2 style="font-family:Arial;text-align:center">
-            ⚠️ انتهت جلسة Remote Browser
-            </h2>
-            """,
-            404
-        )
-
-    token = request.args.get(
-        "token",
-        ""
-    )
+    token = request.args.get("token", "")
 
     if (
         not token
-        or
-        not secrets.compare_digest(
+        or not secrets.compare_digest(
             str(token),
             str(session["token"])
         )
     ):
+        return """
+        <h2 style="font-family:Arial;text-align:center">
+        🔒 رابط غير صالح
+        </h2>
+        """, 403
 
-        return (
-            """
-            <h2 style="font-family:Arial;text-align:center">
-            🔒 رابط غير صالح
-            </h2>
-            """,
-            403
-        )
+    number = html.escape(str(session["number"]))
+    sid = json.dumps(session_id)
+    tok = json.dumps(token)
 
-    number = html.escape(
-        str(session["number"])
-    )
-
-    sid = json.dumps(
-        session_id
-    )
-
-    tok = json.dumps(
-        token
-    )
-
-    page_html = f"""
+    page_html = r"""
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
-
 <head>
-
 <meta charset="UTF-8">
-
 <meta name="viewport"
       content="width=device-width,
                initial-scale=1,
@@ -717,288 +369,210 @@ def remote_page(session_id):
 <title>Free Mobile Remote Browser</title>
 
 <style>
-
-* {{
-    box-sizing:border-box;
-}}
+* {
+    box-sizing: border-box;
+}
 
 html,
-body {{
-    margin:0;
-    padding:0;
-    width:100%;
-    min-height:100%;
-}}
+body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    min-height: 100%;
+}
 
-body {{
-    background:#0f172a;
-    color:#fff;
-    font-family:Arial,sans-serif;
-    overscroll-behavior:none;
-}}
+body {
+    background: #0f172a;
+    color: #fff;
+    font-family: Arial, sans-serif;
+    overscroll-behavior: none;
+}
 
-.header {{
-    background:#1e293b;
-    padding:14px;
-    text-align:center;
-    position:sticky;
-    top:0;
-    z-index:10;
-}}
+.header {
+    background: #1e293b;
+    padding: 14px;
+    text-align: center;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
 
-.number {{
-    direction:ltr;
-    color:#facc15;
-    font-size:25px;
-    font-weight:bold;
-    margin-top:5px;
-}}
+.number {
+    direction: ltr;
+    color: #facc15;
+    font-size: 25px;
+    font-weight: bold;
+    margin-top: 5px;
+}
 
-.status {{
-    margin-top:6px;
-    color:#94a3b8;
-    font-size:13px;
-}}
+.status {
+    margin-top: 6px;
+    color: #94a3b8;
+    font-size: 13px;
+}
 
-.viewer {{
-    padding:15px;
-    display:flex;
-    justify-content:center;
-}}
+.viewer {
+    padding: 15px;
+    display: flex;
+    justify-content: center;
+}
 
-.screen-box {{
-    width:min(390px,100%);
-    background:#000;
-    border-radius:15px;
-    overflow:hidden;
-    box-shadow:
-        0 10px 40px rgba(0,0,0,.5);
-    position:relative;
-}}
+.screen-box {
+    width: min(390px, 100%);
+    background: #000;
+    border-radius: 15px;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0,0,0,.5);
+    position: relative;
+}
 
-#screen {{
-    display:block;
-    width:100%;
-    height:auto;
-    background:#000;
+#screen {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: #000;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: none;
+    cursor: pointer;
+}
 
-    user-select:none;
-    -webkit-user-select:none;
+.controls {
+    max-width: 500px;
+    margin: auto;
+    padding: 0 15px 30px;
+}
 
-    -webkit-touch-callout:none;
+.row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
 
-    touch-action:none;
+button {
+    flex: 1;
+    border: 0;
+    border-radius: 10px;
+    padding: 13px 8px;
+    background: #334155;
+    color: white;
+    font-size: 15px;
+    cursor: pointer;
+    touch-action: manipulation;
+}
 
-    cursor:pointer;
-}}
+button:active {
+    transform: scale(.97);
+}
 
-.controls {{
-    max-width:500px;
-    margin:auto;
-    padding:0 15px 30px;
-}}
+.green {
+    background: #16a34a;
+}
 
-.row {{
-    display:flex;
-    gap:8px;
-    margin-top:8px;
-}}
+.red {
+    background: #dc2626;
+}
 
-button {{
-    flex:1;
-    border:0;
-    border-radius:10px;
-    padding:13px 8px;
-    background:#334155;
-    color:white;
-    font-size:15px;
-    cursor:pointer;
-    touch-action:manipulation;
-}}
+.blue {
+    background: #2563eb;
+}
 
-button:active {{
-    transform:scale(.97);
-}}
-
-.green {{
-    background:#16a34a;
-}}
-
-.red {{
-    background:#dc2626;
-}}
-
-.blue {{
-    background:#2563eb;
-}}
-
-input {{
-    flex:1;
-    min-width:0;
-    border:0;
-    border-radius:10px;
-    padding:13px;
-    font-size:16px;
-}}
-
+input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    border-radius: 10px;
+    padding: 13px;
+    font-size: 16px;
+}
 </style>
-
 </head>
 
 <body>
 
 <div class="header">
-
-    <div>
-        🔥 Free Mobile Remote Browser
-    </div>
-
-    <div class="number">
-        {number}
-    </div>
-
-    <div id="status"
-         class="status">
-        🟡 الاتصال...
-    </div>
-
+    <div>🔥 Free Mobile Remote Browser</div>
+    <div class="number">__NUMBER__</div>
+    <div id="status" class="status">🟡 الاتصال...</div>
 </div>
 
-
 <div class="viewer">
-
     <div class="screen-box">
-
         <img id="screen"
              draggable="false"
              alt="Remote Browser">
-
     </div>
-
 </div>
-
 
 <div class="controls">
 
     <div class="row">
-
-        <button
-            class="blue"
-            onclick="sendWheel(0, -350)">
+        <button class="blue"
+                onclick="sendWheel(0, -350)">
             ⬆️ Scroll Up
         </button>
 
-        <button
-            class="blue"
-            onclick="sendWheel(0, 350)">
+        <button class="blue"
+                onclick="sendWheel(0, 350)">
             ⬇️ Scroll Down
         </button>
-
     </div>
 
-
     <div class="row">
-
-        <button onclick="sendKey('ArrowUp')">
-            ↑
-        </button>
-
+        <button onclick="sendKey('ArrowUp')">↑</button>
     </div>
 
-
     <div class="row">
-
-        <button onclick="sendKey('ArrowLeft')">
-            ←
-        </button>
-
-        <button
-            class="green"
-            onclick="sendKey('Enter')">
+        <button onclick="sendKey('ArrowLeft')">←</button>
+        <button class="green"
+                onclick="sendKey('Enter')">
             ENTER
         </button>
-
-        <button onclick="sendKey('ArrowRight')">
-            →
-        </button>
-
+        <button onclick="sendKey('ArrowRight')">→</button>
     </div>
 
-
     <div class="row">
-
-        <button onclick="sendKey('ArrowDown')">
-            ↓
-        </button>
-
+        <button onclick="sendKey('ArrowDown')">↓</button>
     </div>
 
-
     <div class="row">
+        <input id="textInput"
+               placeholder="اكتب نصاً...">
 
-        <input
-            id="textInput"
-            placeholder="اكتب نصاً...">
-
-        <button
-            class="green"
-            onclick="sendText()">
+        <button class="green"
+                onclick="sendText()">
             إرسال
         </button>
-
     </div>
 
-
     <div class="row">
-
-        <button onclick="sendKey('Backspace')">
-            ⌫
-        </button>
-
-        <button onclick="sendKey('Tab')">
-            TAB
-        </button>
-
-        <button onclick="sendKey('Escape')">
-            ESC
-        </button>
-
-        <button onclick="reloadPage()">
-            🔄
-        </button>
-
+        <button onclick="sendKey('Backspace')">⌫</button>
+        <button onclick="sendKey('Tab')">TAB</button>
+        <button onclick="sendKey('Escape')">ESC</button>
+        <button onclick="reloadPage()">🔄</button>
     </div>
 
-
     <div class="row">
-
-        <button
-            class="red"
-            onclick="closeBrowser()">
+        <button class="red"
+                onclick="closeBrowser()">
             🛑 إغلاق المتصفح
         </button>
-
     </div>
 
 </div>
 
-
 <script>
-
-const SESSION_ID = {sid};
-
-const TOKEN = {tok};
+const SESSION_ID = __SID__;
+const TOKEN = __TOKEN__;
 
 const BASE =
-    window.location.origin
-    + "/vip/"
-    + encodeURIComponent(SESSION_ID);
+    window.location.origin +
+    "/vip/" +
+    encodeURIComponent(SESSION_ID);
 
-const screen =
-    document.getElementById("screen");
-
-const status =
-    document.getElementById("status");
+const screen = document.getElementById("screen");
+const status = document.getElementById("status");
 
 let loading = false;
 
@@ -1007,84 +581,68 @@ let loading = false;
    SCREEN REFRESH
    ============================================================ */
 
-async function refreshScreen() {{
-
+async function refreshScreen() {
     if (loading) return;
 
     loading = true;
 
-    try {{
-
+    try {
         const response = await fetch(
-            BASE
-            + "/screen?token="
-            + encodeURIComponent(TOKEN)
-            + "&t="
-            + Date.now(),
-            {{
-                cache:"no-store"
-            }}
+            BASE +
+            "/screen?token=" +
+            encodeURIComponent(TOKEN) +
+            "&t=" +
+            Date.now(),
+            {
+                cache: "no-store"
+            }
         );
 
-        if (!response.ok) {{
-
-            status.innerText =
-                "🔴 الجلسة غير متاحة";
-
+        if (!response.ok) {
+            status.innerText = "🔴 الجلسة غير متاحة";
             loading = false;
-
             return;
-        }}
+        }
 
-        const blob =
-            await response.blob();
+        const blob = await response.blob();
+        const oldSrc = screen.src;
 
-        const oldSrc =
-            screen.src;
+        screen.src = URL.createObjectURL(blob);
 
-        screen.src =
-            URL.createObjectURL(blob);
-
-        if (oldSrc &&
-            oldSrc.startsWith("blob:")) {{
-
-            try {{
+        if (
+            oldSrc &&
+            oldSrc.startsWith("blob:")
+        ) {
+            try {
                 URL.revokeObjectURL(oldSrc);
-            }} catch(e) {{}}
-        }}
+            } catch (e) {}
+        }
 
         status.innerText =
             "🟢 Remote Browser متصل";
 
-    }}
-    catch(e) {{
-
+    } catch (e) {
         status.innerText =
             "🔴 انقطع الاتصال";
-    }}
+    }
 
     loading = false;
-}}
+}
 
 
 /* ============================================================
-   TOUCH / SWIPE VARIABLES
+   TOUCH / SWIPE
    ============================================================ */
 
 let pointerStartX = 0;
-
 let pointerStartY = 0;
-
 let pointerLastX = 0;
-
 let pointerLastY = 0;
 
 let isDragging = false;
-
 let movedDistance = 0;
 
 let wheelSending = false;
-
 let pendingDy = 0;
 
 
@@ -1094,35 +652,24 @@ let pendingDy = 0;
 
 screen.addEventListener(
     "pointerdown",
-    function(event) {{
-
+    function(event) {
         event.preventDefault();
 
-        pointerStartX =
-            event.clientX;
+        pointerStartX = event.clientX;
+        pointerStartY = event.clientY;
 
-        pointerStartY =
-            event.clientY;
-
-        pointerLastX =
-            event.clientX;
-
-        pointerLastY =
-            event.clientY;
+        pointerLastX = event.clientX;
+        pointerLastY = event.clientY;
 
         isDragging = false;
-
         movedDistance = 0;
 
-        try {{
-
+        try {
             screen.setPointerCapture(
                 event.pointerId
             );
-
-        }} catch(e) {{}}
-
-    }}
+        } catch (e) {}
+    }
 );
 
 
@@ -1132,105 +679,83 @@ screen.addEventListener(
 
 screen.addEventListener(
     "pointermove",
-    async function(event) {{
-
+    function(event) {
         event.preventDefault();
 
         const dx =
-            event.clientX
-            - pointerLastX;
+            event.clientX - pointerLastX;
 
         const dy =
-            event.clientY
-            - pointerLastY;
+            event.clientY - pointerLastY;
 
-        pointerLastX =
-            event.clientX;
-
-        pointerLastY =
-            event.clientY;
+        pointerLastX = event.clientX;
+        pointerLastY = event.clientY;
 
         movedDistance +=
-            Math.abs(dx)
-            +
-            Math.abs(dy);
+            Math.abs(dx) + Math.abs(dy);
 
-        /*
-         * حركة أقل من 8 بكسل تعتبر ضغطة
-         */
-
-        if (movedDistance < 8) {{
+        if (movedDistance < 8) {
             return;
-        }}
+        }
 
         isDragging = true;
 
         /*
-         * إصبع يتحرك للأعلى
-         * = الصفحة تنزل
+         * إصبع للأعلى = Scroll Down
+         * إصبع للأسفل = Scroll Up
          */
 
-        const scrollDy =
-            -dy;
+        pendingDy += -dy;
 
-        pendingDy +=
-            scrollDy;
-
-        if (wheelSending) {{
-            return;
-        }}
-
-        wheelSending = true;
-
-        try {{
-
-            while (
-                Math.abs(pendingDy) >= 1
-            ) {{
-
-                const amount =
-                    Math.max(
-                        -150,
-                        Math.min(
-                            150,
-                            pendingDy
-                        )
-                    );
-
-                pendingDy -=
-                    amount;
-
-                await fetch(
-                    BASE + "/wheel",
-                    {{
-                        method:"POST",
-
-                        headers:{{
-                            "Content-Type":
-                                "application/json"
-                        }},
-
-                        body:JSON.stringify({{
-                            token:TOKEN,
-                            dx:0,
-                            dy:amount
-                        }})
-                    }}
-                );
-            }}
-
-        }}
-        catch(e) {{}}
-
-        wheelSending = false;
-
-        setTimeout(
-            refreshScreen,
-            150
-        );
-
-    }}
+        flushWheel();
+    }
 );
+
+
+/* ============================================================
+   SEND SWIPE SCROLL
+   ============================================================ */
+
+async function flushWheel() {
+    if (wheelSending) return;
+    if (Math.abs(pendingDy) < 1) return;
+
+    wheelSending = true;
+
+    try {
+        while (Math.abs(pendingDy) >= 1) {
+            const amount = Math.max(
+                -150,
+                Math.min(150, pendingDy)
+            );
+
+            pendingDy -= amount;
+
+            await fetch(
+                BASE + "/wheel",
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+                    body: JSON.stringify({
+                        token: TOKEN,
+                        dx: 0,
+                        dy: amount
+                    })
+                }
+            );
+        }
+    } catch (e) {}
+
+    wheelSending = false;
+
+    setTimeout(
+        refreshScreen,
+        100
+    );
+}
 
 
 /* ============================================================
@@ -1239,22 +764,18 @@ screen.addEventListener(
 
 screen.addEventListener(
     "pointerup",
-    async function(event) {{
-
+    async function(event) {
         event.preventDefault();
 
         /*
-         * إذا كان المستخدم يسحب،
-         * لا نرسل Click
+         * لا ترسل Click بعد السحب
          */
 
-        if (isDragging) {{
-
+        if (isDragging) {
             setTimeout(
                 refreshScreen,
-                200
+                150
             );
-
             return;
         }
 
@@ -1264,55 +785,44 @@ screen.addEventListener(
         if (
             !rect.width ||
             !rect.height
-        ) {{
+        ) {
             return;
-        }}
+        }
 
         const x =
-            event.clientX
-            - rect.left;
+            event.clientX - rect.left;
 
         const y =
-            event.clientY
-            - rect.top;
+            event.clientY - rect.top;
 
-        try {{
-
+        try {
             await fetch(
                 BASE + "/click",
-                {{
-                    method:"POST",
-
-                    headers:{{
+                {
+                    method: "POST",
+                    headers: {
                         "Content-Type":
                             "application/json"
-                    }},
-
-                    body:JSON.stringify({{
-                        token:TOKEN,
-
-                        x:x,
-
-                        y:y,
-
+                    },
+                    body: JSON.stringify({
+                        token: TOKEN,
+                        x: x,
+                        y: y,
                         display_width:
                             rect.width,
-
                         display_height:
                             rect.height
-                    }})
-                }}
+                    })
+                }
             );
 
             setTimeout(
                 refreshScreen,
-                300
+                250
             );
 
-        }}
-        catch(e) {{}}
-
-    }}
+        } catch (e) {}
+    }
 );
 
 
@@ -1322,58 +832,49 @@ screen.addEventListener(
 
 screen.addEventListener(
     "pointercancel",
-    function(event) {{
-
+    function(event) {
         isDragging = false;
-
-    }}
+        pendingDy = 0;
+    }
 );
 
 
 /* ============================================================
-   WHEEL
+   WHEEL SUPPORT
    ============================================================ */
 
 screen.addEventListener(
     "wheel",
-    async function(event) {{
-
+    async function(event) {
         event.preventDefault();
 
-        try {{
-
+        try {
             await fetch(
                 BASE + "/wheel",
-                {{
-                    method:"POST",
-
-                    headers:{{
+                {
+                    method: "POST",
+                    headers: {
                         "Content-Type":
                             "application/json"
-                    }},
-
-                    body:JSON.stringify({{
-                        token:TOKEN,
-
-                        dx:event.deltaX,
-
-                        dy:event.deltaY
-                    }})
-                }}
+                    },
+                    body: JSON.stringify({
+                        token: TOKEN,
+                        dx: event.deltaX,
+                        dy: event.deltaY
+                    })
+                }
             );
 
             setTimeout(
                 refreshScreen,
-                150
+                120
             );
 
-        }}
-        catch(e) {{}}
-
-    }},
-    {{
-        passive:false
-    }}
+        } catch (e) {}
+    },
+    {
+        passive: false
+    }
 );
 
 
@@ -1381,145 +882,123 @@ screen.addEventListener(
    BUTTON SCROLL
    ============================================================ */
 
-async function sendWheel(dx, dy) {{
-
-    try {{
-
+async function sendWheel(dx, dy) {
+    try {
         await fetch(
             BASE + "/wheel",
-            {{
-                method:"POST",
-
-                headers:{{
+            {
+                method: "POST",
+                headers: {
                     "Content-Type":
                         "application/json"
-                }},
-
-                body:JSON.stringify({{
-                    token:TOKEN,
-                    dx:dx,
-                    dy:dy
-                }})
-            }}
+                },
+                body: JSON.stringify({
+                    token: TOKEN,
+                    dx: dx,
+                    dy: dy
+                })
+            }
         );
 
         setTimeout(
             refreshScreen,
-            300
+            250
         );
 
-    }}
-    catch(e) {{}}
-}}
+    } catch (e) {}
+}
 
 
 /* ============================================================
    KEY
    ============================================================ */
 
-async function sendKey(key) {{
-
-    try {{
-
+async function sendKey(key) {
+    try {
         await fetch(
             BASE + "/key",
-            {{
-                method:"POST",
-
-                headers:{{
+            {
+                method: "POST",
+                headers: {
                     "Content-Type":
                         "application/json"
-                }},
-
-                body:JSON.stringify({{
-                    token:TOKEN,
-                    key:key
-                }})
-            }}
+                },
+                body: JSON.stringify({
+                    token: TOKEN,
+                    key: key
+                })
+            }
         );
 
         setTimeout(
             refreshScreen,
-            300
+            250
         );
 
-    }}
-    catch(e) {{}}
-}}
+    } catch (e) {}
+}
 
 
 /* ============================================================
    TEXT
    ============================================================ */
 
-async function sendText() {{
-
+async function sendText() {
     const input =
-        document.getElementById(
-            "textInput"
-        );
+        document.getElementById("textInput");
 
-    const text =
-        input.value;
+    const text = input.value;
 
     if (!text) return;
 
-    try {{
-
+    try {
         await fetch(
             BASE + "/type",
-            {{
-                method:"POST",
-
-                headers:{{
+            {
+                method: "POST",
+                headers: {
                     "Content-Type":
                         "application/json"
-                }},
-
-                body:JSON.stringify({{
-                    token:TOKEN,
-                    text:text
-                }})
-            }}
+                },
+                body: JSON.stringify({
+                    token: TOKEN,
+                    text: text
+                })
+            }
         );
 
         input.value = "";
 
         setTimeout(
             refreshScreen,
-            300
+            250
         );
 
-    }}
-    catch(e) {{}}
-}}
+    } catch (e) {}
+}
 
 
 /* ============================================================
    RELOAD
    ============================================================ */
 
-async function reloadPage() {{
-
+async function reloadPage() {
     status.innerText =
         "🔄 إعادة تحميل...";
 
-    try {{
-
+    try {
         await fetch(
             BASE + "/reload",
-            {{
-                method:"POST",
-
-                headers:{{
+            {
+                method: "POST",
+                headers: {
                     "Content-Type":
                         "application/json"
-                }},
-
-                body:JSON.stringify({{
-                    token:TOKEN
-                }})
-            }}
+                },
+                body: JSON.stringify({
+                    token: TOKEN
+                })
+            }
         );
 
         setTimeout(
@@ -1527,49 +1006,43 @@ async function reloadPage() {{
             500
         );
 
-    }}
-    catch(e) {{}}
-}}
+    } catch (e) {}
+}
 
 
 /* ============================================================
    CLOSE
    ============================================================ */
 
-async function closeBrowser() {{
-
+async function closeBrowser() {
     if (
         !confirm(
             "هل تريد إغلاق المتصفح؟"
         )
-    ) {{
+    ) {
         return;
-    }}
+    }
 
-    try {{
-
+    try {
         await fetch(
             BASE + "/close",
-            {{
-                method:"POST",
-
-                headers:{{
+            {
+                method: "POST",
+                headers: {
                     "Content-Type":
                         "application/json"
-                }},
-
-                body:JSON.stringify({{
-                    token:TOKEN
-                }})
-            }}
+                },
+                body: JSON.stringify({
+                    token: TOKEN
+                })
+            }
         );
 
         status.innerText =
             "🔴 تم إغلاق المتصفح";
 
-    }}
-    catch(e) {{}}
-}}
+    } catch (e) {}
+}
 
 
 /* ============================================================
@@ -1582,17 +1055,21 @@ setInterval(
     refreshScreen,
     700
 );
-
 </script>
 
 </body>
-
 </html>
 """
 
-    response = make_response(
+    # Inject dynamic values WITHOUT using an f-string.
+    page_html = (
         page_html
+        .replace("__NUMBER__", number)
+        .replace("__SID__", sid)
+        .replace("__TOKEN__", tok)
     )
+
+    response = make_response(page_html)
 
     response.set_cookie(
         "vip_active_session",
@@ -1609,17 +1086,11 @@ setInterval(
 # SCREEN ENDPOINT
 # ============================================================
 
-@app.route(
-    "/vip/<session_id>/screen"
-)
+@app.route("/vip/<session_id>/screen")
 def remote_screen(session_id):
-
-    session = token_valid(
-        session_id
-    )
+    session = token_valid(session_id)
 
     if not session:
-
         return "Unauthorized", 403
 
     result = send_remote_command(
@@ -1630,14 +1101,10 @@ def remote_screen(session_id):
     )
 
     if not result.get("ok"):
-
-        return (
-            result.get(
-                "error",
-                "SCREEN_ERROR"
-            ),
-            500
-        )
+        return result.get(
+            "error",
+            "SCREEN_ERROR"
+        ), 500
 
     return Response(
         result["image"],
@@ -1653,33 +1120,17 @@ def remote_screen(session_id):
 # REMOTE JSON COMMAND
 # ============================================================
 
-def remote_json_command(
-    session_id,
-    command
-):
-
-    session = token_valid(
-        session_id
-    )
+def remote_json_command(session_id, command):
+    session = token_valid(session_id)
 
     if not session:
-
         return jsonify({
             "ok": False,
             "error": "UNAUTHORIZED"
         }), 403
 
-    data = (
-        request.get_json(
-            silent=True
-        )
-        or {}
-    )
-
-    data.pop(
-        "token",
-        None
-    )
+    data = request.get_json(silent=True) or {}
+    data.pop("token", None)
 
     result = send_remote_command(
         session_id,
@@ -1688,81 +1139,51 @@ def remote_json_command(
         data
     )
 
-    return jsonify(
-        result
-    )
+    return jsonify(result)
 
 
-# ============================================================
-# REMOTE ROUTES
-# ============================================================
-
-@app.route(
-    "/vip/<session_id>/click",
-    methods=["POST"]
-)
+@app.route("/vip/<session_id>/click", methods=["POST"])
 def remote_click(session_id):
-
     return remote_json_command(
         session_id,
         "click"
     )
 
 
-@app.route(
-    "/vip/<session_id>/wheel",
-    methods=["POST"]
-)
+@app.route("/vip/<session_id>/wheel", methods=["POST"])
 def remote_wheel(session_id):
-
     return remote_json_command(
         session_id,
         "wheel"
     )
 
 
-@app.route(
-    "/vip/<session_id>/key",
-    methods=["POST"]
-)
+@app.route("/vip/<session_id>/key", methods=["POST"])
 def remote_key(session_id):
-
     return remote_json_command(
         session_id,
         "key"
     )
 
 
-@app.route(
-    "/vip/<session_id>/type",
-    methods=["POST"]
-)
+@app.route("/vip/<session_id>/type", methods=["POST"])
 def remote_type(session_id):
-
     return remote_json_command(
         session_id,
         "type"
     )
 
 
-@app.route(
-    "/vip/<session_id>/reload",
-    methods=["POST"]
-)
+@app.route("/vip/<session_id>/reload", methods=["POST"])
 def remote_reload(session_id):
-
     return remote_json_command(
         session_id,
         "reload"
     )
 
 
-@app.route(
-    "/vip/<session_id>/close",
-    methods=["POST"]
-)
+@app.route("/vip/<session_id>/close", methods=["POST"])
 def remote_close(session_id):
-
     return remote_json_command(
         session_id,
         "close"
@@ -1775,40 +1196,17 @@ def remote_close(session_id):
 
 @app.route("/")
 def home():
-
     return """
     <!DOCTYPE html>
-
     <html lang="ar" dir="rtl">
-
     <head>
-
         <meta charset="UTF-8">
-
-        <title>
-            Free Mobile VIP Bot
-        </title>
-
+        <title>Free Mobile VIP Bot</title>
     </head>
-
-    <body
-        style="
-        font-family:Arial;
-        text-align:center;
-        padding:50px;
-        "
-    >
-
-        <h2>
-            🚀 Free Mobile VIP Bot
-        </h2>
-
-        <p>
-            🟢 Bot يعمل
-        </p>
-
+    <body style="font-family:Arial;text-align:center;padding:50px;">
+        <h2>🚀 Free Mobile VIP Bot</h2>
+        <p>🟢 Bot يعمل</p>
     </body>
-
     </html>
     """
 
@@ -1818,7 +1216,6 @@ def home():
 # ============================================================
 
 def evaluate_vip_expanded(num):
-
     clean = (
         str(num)
         .replace(" ", "")
@@ -1830,77 +1227,44 @@ def evaluate_vip_expanded(num):
         len(clean) == 10
         and (
             clean.startswith("06")
-            or
-            clean.startswith("07")
+            or clean.startswith("07")
         )
     ):
-
         return None
 
     d = clean[2:]
 
     if len(set(d)) <= 4:
-
-        return (
-            "تنوع منخفض للأرقام (مميز)"
-        )
+        return "تنوع منخفض للأرقام (مميز)"
 
     if d == d[::-1]:
-
-        return (
-            "مرآة متناظرة كاملة (Palindrome)"
-        )
+        return "مرآة متناظرة كاملة (Palindrome)"
 
     if d[:4] == d[4:]:
-
-        return (
-            "نصفين متطابقين تماماً"
-        )
+        return "نصفين متطابقين تماماً"
 
     sequences = [
-        "0123",
-        "1234",
-        "2345",
-        "3456",
-        "4567",
-        "5678",
-        "6789",
-        "9876",
-        "8765",
-        "7654",
-        "6543",
-        "5432",
-        "4321",
-        "3210"
+        "0123", "1234", "2345", "3456",
+        "4567", "5678", "6789", "9876",
+        "8765", "7654", "6543", "5432",
+        "4321", "3210"
     ]
 
     for seq in sequences:
-
         if seq in d:
-
-            return (
-                "تسلسل أرقام متتالي"
-            )
+            return "تسلسل أرقام متتالي"
 
     if (
         len(set(d[-4:])) <= 2
-        or
-        len(set(d[:4])) <= 2
+        or len(set(d[:4])) <= 2
     ):
-
-        return (
-            "تكرار عالي في الأطراف"
-        )
+        return "تكرار عالي في الأطراف"
 
     if (
         d[0] == d[1] == d[2]
-        or
-        d[-3] == d[-2] == d[-1]
+        or d[-3] == d[-2] == d[-1]
     ):
-
-        return (
-            "ثلاثية متتالية"
-        )
+        return "ثلاثية متتالية"
 
     return None
 
@@ -1910,7 +1274,6 @@ def evaluate_vip_expanded(num):
 # ============================================================
 
 def select_number(page, number):
-
     target = (
         str(number)
         .replace(" ", "")
@@ -1921,96 +1284,62 @@ def select_number(page, number):
     selected = False
 
     try:
-
         radios = page.locator(
             'input[type="radio"]'
         )
 
-        for i in range(
-            radios.count()
-        ):
-
+        for i in range(radios.count()):
             try:
-
                 radio = radios.nth(i)
 
                 value = (
-                    radio.get_attribute(
-                        "value"
-                    )
+                    radio.get_attribute("value")
                     or ""
                 )
 
                 radio_id = (
-                    radio.get_attribute(
-                        "id"
-                    )
+                    radio.get_attribute("id")
                     or ""
                 )
 
                 combined = (
-                    value
-                    + " "
-                    + radio_id
+                    value + " " + radio_id
                 ).lower()
 
                 if (
                     "new" in combined
-                    or
-                    "nouveau" in combined
+                    or "nouveau" in combined
                 ):
-
                     try:
-
                         radio.check(
                             force=True,
                             timeout=2000
                         )
-
                     except Exception:
-
                         radio.click(
                             force=True,
                             timeout=2000
                         )
 
                     selected = True
-
                     break
 
             except Exception:
-
                 continue
 
+        selects = page.locator("select")
 
-        selects = page.locator(
-            "select"
-        )
-
-        for i in range(
-            selects.count()
-        ):
-
+        for i in range(selects.count()):
             try:
-
                 select = selects.nth(i)
+                options = select.locator("option")
 
-                options = select.locator(
-                    "option"
-                )
-
-                for j in range(
-                    options.count()
-                ):
-
+                for j in range(options.count()):
                     try:
-
                         option = options.nth(j)
 
                         value = (
-                            option.get_attribute(
-                                "value"
-                            )
+                            option.get_attribute("value")
                             or ""
                         )
 
@@ -2021,34 +1350,20 @@ def select_number(page, number):
 
                         clean_value = (
                             value
-                            .replace(
-                                " ",
-                                ""
-                            )
-                            .replace(
-                                "-",
-                                ""
-                            )
+                            .replace(" ", "")
+                            .replace("-", "")
                         )
 
                         clean_text = (
                             text
-                            .replace(
-                                " ",
-                                ""
-                            )
-                            .replace(
-                                "-",
-                                ""
-                            )
+                            .replace(" ", "")
+                            .replace("-", "")
                         )
 
                         if (
                             target in clean_value
-                            or
-                            target in clean_text
+                            or target in clean_text
                         ):
-
                             select.select_option(
                                 value=value,
                                 timeout=2000
@@ -2064,15 +1379,12 @@ def select_number(page, number):
                             return True
 
                     except Exception:
-
                         continue
 
             except Exception:
-
                 continue
 
     except Exception as e:
-
         print(
             f"⚠️ [SELECT ERROR] {repr(e)}",
             flush=True
@@ -2090,10 +1402,8 @@ def save_vip_session(
     number,
     session_id
 ):
-
     safe_number = "".join(
-        c
-        for c in str(number)
+        c for c in str(number)
         if c.isdigit()
     )
 
@@ -2108,24 +1418,16 @@ def save_vip_session(
     )
 
     try:
-
         context.storage_state(
             path=state_file,
             indexed_db=True
         )
 
         metadata = {
-            "session_id":
-                session_id,
-
-            "number":
-                safe_number,
-
-            "created":
-                int(time.time()),
-
-            "state_file":
-                state_file
+            "session_id": session_id,
+            "number": safe_number,
+            "created": int(time.time()),
+            "state_file": state_file
         }
 
         with open(
@@ -2133,7 +1435,6 @@ def save_vip_session(
             "w",
             encoding="utf-8"
         ) as f:
-
             json.dump(
                 metadata,
                 f,
@@ -2149,17 +1450,15 @@ def save_vip_session(
         return True
 
     except Exception as e:
-
         print(
             f"⚠️ [SESSION ERROR] {repr(e)}",
             flush=True
         )
-
         return False
 
 
 # ============================================================
-# TELEGRAM
+# TELEGRAM ALERT
 # ============================================================
 
 def send_telegram_alert(
@@ -2168,16 +1467,14 @@ def send_telegram_alert(
     session_id,
     token
 ):
-
     render_url = os.environ.get(
         "RENDER_EXTERNAL_URL",
         "https://freemobile-bot.onrender.com"
     ).rstrip("/")
 
     open_url = (
-        f"{render_url}"
-        f"/vip/{session_id}"
-        f"?token={token}"
+        f"{render_url}/vip/"
+        f"{session_id}?token={token}"
     )
 
     message = (
@@ -2187,44 +1484,28 @@ def send_telegram_alert(
         f"🖥️ [فتح Remote Browser]({open_url})"
     )
 
-    if (
-        not TELEGRAM_BOT_TOKEN
-        or
-        not CHAT_ID
-    ):
-
+    if not TELEGRAM_BOT_TOKEN or not CHAT_ID:
         return
 
     url = (
         "https://api.telegram.org/"
-        f"bot{TELEGRAM_BOT_TOKEN}"
-        "/sendMessage"
+        f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     )
 
     payload = {
-        "chat_id":
-            CHAT_ID,
-
-        "text":
-            message,
-
-        "parse_mode":
-            "Markdown",
-
-        "disable_web_page_preview":
-            True
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True
     }
 
     try:
-
         requests.post(
             url,
             json=payload,
             timeout=10
         )
-
     except Exception as e:
-
         print(
             f"⚠️ [TELEGRAM ERROR] {repr(e)}",
             flush=True
@@ -2235,11 +1516,7 @@ def send_telegram_alert(
 # REMOTE SESSION
 # ============================================================
 
-def run_remote_session(
-    page,
-    session
-):
-
+def run_remote_session(page, session):
     started = time.time()
 
     print(
@@ -2248,58 +1525,40 @@ def run_remote_session(
     )
 
     try:
-
         while True:
-
             process_remote_commands(
                 page,
                 session
             )
 
-            if session.get(
-                "closed"
-            ):
-
+            if session.get("closed"):
                 break
 
-            # =================================================
-            # 5 MINUTE TIMEOUT
-            # =================================================
-
             if (
-                time.time()
-                - started
-                >
-                REMOTE_SESSION_TIMEOUT
+                time.time() - started
+                > REMOTE_SESSION_TIMEOUT
             ):
-
                 print(
-                    "⏰ [REMOTE] انتهت جلسة Remote Browser بعد 5 دقائق",
+                    "⏰ [REMOTE] انتهت الجلسة بعد 5 دقائق",
                     flush=True
                 )
-
                 break
 
             try:
-
                 _ = page.url
-
             except Exception:
-
                 break
 
-            time.sleep(
-                0.08
-            )
+            time.sleep(0.08)
 
-    except Exception:
-
-        pass
+    except Exception as e:
+        print(
+            f"⚠️ [REMOTE SESSION ERROR] {repr(e)}",
+            flush=True
+        )
 
     finally:
-
         session["closed"] = True
-
         remove_live_session(
             session["session_id"]
         )
@@ -2310,11 +1569,9 @@ def run_remote_session(
 # ============================================================
 
 def get_numbers(page):
-
     result = page.evaluate(
         """
         async () => {
-
             const urls = [
                 './api/msisdns?' + Date.now(),
                 '/api/msisdns?' + Date.now()
@@ -2323,83 +1580,57 @@ def get_numbers(page):
             let lastError = null;
 
             for (const url of urls) {
-
                 try {
-
-                    const res = await fetch(
-                        url,
-                        {
-                            method: 'GET',
-                            credentials: 'include',
-                            headers: {
-                                'X-Requested-With':
-                                    'XMLHttpRequest',
-
-                                'Cache-Control':
-                                    'no-cache'
-                            }
+                    const res = await fetch(url, {
+                        method: 'GET',
+                        credentials: 'include',
+                        headers: {
+                            'X-Requested-With':
+                                'XMLHttpRequest',
+                            'Cache-Control':
+                                'no-cache'
                         }
-                    );
+                    });
 
-                    const text =
-                        await res.text();
+                    const text = await res.text();
 
                     let data = null;
 
                     try {
                         data = JSON.parse(text);
-                    }
-                    catch(e) {}
+                    } catch (e) {}
 
                     if (!res.ok) {
-
                         lastError =
-                            'HTTP '
-                            + res.status
-                            + ' URL='
-                            + url;
+                            'HTTP ' +
+                            res.status +
+                            ' URL=' +
+                            url;
 
-                        if (
-                            res.status === 404
-                        ) {
+                        if (res.status === 404) {
                             continue;
                         }
 
                         return {
-                            error:
-                                lastError
+                            error: lastError
                         };
                     }
 
                     return {
-                        status:
-                            res.status,
-
-                        url:
-                            url,
-
-                        data:
-                            data,
-
-                        raw:
-                            text.substring(
-                                0,
-                                1000
-                            )
+                        status: res.status,
+                        url: url,
+                        data: data,
+                        raw: text.substring(0, 1000)
                     };
 
-                }
-                catch(e) {
-
-                    lastError =
-                        String(e);
+                } catch (e) {
+                    lastError = String(e);
                 }
             }
 
             return {
                 error:
-                    lastError
-                    ||
+                    lastError ||
                     'API_REQUEST_FAILED'
             };
         }
@@ -2414,76 +1645,48 @@ def get_numbers(page):
 # ============================================================
 
 def run_smart_monitor():
-
     print(
         "🔥🔥🔥 [THREAD ACTIVE] محرك الفحص بدأ",
         flush=True
     )
 
-    os.environ[
-        "PLAYWRIGHT_BROWSERS_PATH"
-    ] = (
-        "/opt/render/project/src/"
-        "pw-browsers"
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = (
+        "/opt/render/project/src/pw-browsers"
     )
 
     current_proxies = []
-
     proxy_refresh_time = 0
 
     while True:
-
         browser = None
 
         try:
-
             with sync_playwright() as p:
-
                 while True:
-
                     browser = None
-
                     context = None
-
                     page = None
 
                     try:
-
-                        # =====================================
-                        # PROXY REFRESH
-                        # =====================================
-
+                        # تحديث قائمة البروكسيات تلقائياً كل 10 دقائق
                         if (
-                            time.time()
-                            -
-                            proxy_refresh_time
-                            >
-                            600
-                            or
-                            not current_proxies
+                            time.time() - proxy_refresh_time > 600
+                            or not current_proxies
                         ):
-
                             current_proxies = (
                                 fetch_fresh_proxies()
                             )
-
-                            proxy_refresh_time = (
-                                time.time()
-                            )
+                            proxy_refresh_time = time.time()
 
                         proxy = None
 
                         if current_proxies:
-
                             proxy = random.choice(
                                 current_proxies
                             )
 
                         launch_args = {
-
-                            "headless":
-                                True,
-
+                            "headless": True,
                             "args": [
                                 "--no-sandbox",
                                 "--disable-setuid-sandbox",
@@ -2491,222 +1694,130 @@ def run_smart_monitor():
                             ]
                         }
 
+                        # IP / Proxy logic intentionally unchanged
                         if proxy:
-
-                            launch_args[
-                                "proxy"
-                            ] = {
-                                "server":
-                                    proxy
+                            launch_args["proxy"] = {
+                                "server": proxy
                             }
-
-                        # =====================================
-                        # LAUNCH
-                        # =====================================
 
                         browser = p.chromium.launch(
                             **launch_args
                         )
 
-                        context = (
-                            browser.new_context(
-                                user_agent=
-                                    "Mozilla/5.0 "
-                                    "(iPhone; CPU iPhone OS 16_0 like Mac OS X) "
-                                    "AppleWebKit/605.1.15 "
-                                    "(KHTML, like Gecko) "
-                                    "Version/16.0 "
-                                    "Mobile/15E148 "
-                                    "Safari/604.1",
-
-                                viewport={
-                                    "width":390,
-                                    "height":844
-                                },
-
-                                locale="fr-FR"
-                            )
+                        context = browser.new_context(
+                            user_agent=(
+                                "Mozilla/5.0 "
+                                "(iPhone; CPU iPhone OS 16_0 like Mac OS X) "
+                                "AppleWebKit/605.1.15 "
+                                "(KHTML, like Gecko) "
+                                "Version/16.0 "
+                                "Mobile/15E148 "
+                                "Safari/604.1"
+                            ),
+                            viewport={
+                                "width": 390,
+                                "height": 844
+                            },
+                            locale="fr-FR"
                         )
 
-                        page = (
-                            context.new_page()
-                        )
-
-                        # =====================================
-                        # OPEN FREE MOBILE
-                        # =====================================
+                        page = context.new_page()
 
                         page.goto(
                             TARGET_URL,
-                            wait_until=
-                                "domcontentloaded",
+                            wait_until="domcontentloaded",
                             timeout=25000
                         )
 
                         try:
-
-                            page.mouse.move(
-                                100,
-                                100
-                            )
-
+                            page.mouse.move(100, 100)
                             page.mouse.down()
-
                             page.mouse.up()
-
                         except Exception:
-
                             pass
 
-                        time.sleep(
-                            2.0
-                        )
+                        time.sleep(2.0)
 
-                        # =====================================
-                        # API
-                        # =====================================
-
-                        api_result = (
-                            get_numbers(page)
-                        )
+                        api_result = get_numbers(page)
 
                         if (
-                            isinstance(
-                                api_result,
-                                dict
-                            )
-                            and
-                            api_result.get(
-                                "error"
-                            )
+                            isinstance(api_result, dict)
+                            and api_result.get("error")
                         ):
-
                             err = str(
-                                api_result[
-                                    "error"
-                                ]
+                                api_result["error"]
                             )
 
                             print(
-                                f"⚠️ [API ERROR] "
-                                f"{err} "
+                                f"⚠️ [API ERROR] {err} "
                                 f"(البروكسي المستخدم: {proxy})",
                                 flush=True
                             )
 
                             if (
                                 proxy
-                                and
-                                proxy in current_proxies
+                                and proxy in current_proxies
                             ):
-
                                 current_proxies.remove(
                                     proxy
                                 )
 
                             if "429" in err:
-
                                 time.sleep(
-                                    random.uniform(
-                                        5,
-                                        10
-                                    )
+                                    random.uniform(5, 10)
                                 )
-
                             else:
-
                                 time.sleep(
-                                    random.uniform(
-                                        3,
-                                        6
-                                    )
+                                    random.uniform(3, 6)
                                 )
 
                         else:
-
-                            status = (
-                                api_result.get(
-                                    "status"
-                                )
-                            )
-
-                            data = (
-                                api_result.get(
-                                    "data"
-                                )
-                            )
-
-                            raw = (
-                                api_result.get(
-                                    "raw",
-                                    ""
-                                )
-                            )
+                            status = api_result.get("status")
+                            data = api_result.get("data")
+                            raw = api_result.get("raw", "")
 
                             numbers_list = []
 
-                            if isinstance(
-                                data,
-                                list
-                            ):
-
+                            if isinstance(data, list):
                                 numbers_list = data
 
-                            elif isinstance(
-                                data,
-                                dict
-                            ):
-
-                                numbers_list = (
-                                    data.get(
-                                        "msisdns",
-                                        []
-                                    )
+                            elif isinstance(data, dict):
+                                numbers_list = data.get(
+                                    "msisdns",
+                                    []
                                 )
 
                             print(
-                                f"📱 [API] "
-                                f"HTTP={status} | "
+                                f"📱 [API] HTTP={status} | "
                                 f"عدد الأرقام: "
                                 f"{len(numbers_list)} | "
                                 f"البروكسي: {proxy}",
                                 flush=True
                             )
 
-                            if (
-                                not numbers_list
-                                and raw
-                            ):
-
+                            if not numbers_list and raw:
                                 print(
-                                    f"📄 [API RAW] "
-                                    f"{raw[:300]}",
+                                    f"📄 [API RAW] {raw[:300]}",
                                     flush=True
                                 )
 
                             found = False
 
                             for item in numbers_list:
-
                                 number = (
-                                    item.get(
-                                        "value"
-                                    )
+                                    item.get("value")
                                     if isinstance(
                                         item,
                                         dict
                                     )
-                                    else
-                                    str(item)
+                                    else str(item)
                                 )
 
                                 if not number:
                                     continue
 
-                                desc = (
-                                    evaluate_vip_expanded(
-                                        number
-                                    )
+                                desc = evaluate_vip_expanded(
+                                    number
                                 )
 
                                 if not desc:
@@ -2715,8 +1826,7 @@ def run_smart_monitor():
                                 found = True
 
                                 print(
-                                    f"🔥🔥🔥 VIP FOUND: "
-                                    f"{number}",
+                                    f"🔥🔥🔥 VIP FOUND: {number}",
                                     flush=True
                                 )
 
@@ -2725,34 +1835,23 @@ def run_smart_monitor():
                                     number
                                 )
 
-                                session = (
-                                    create_live_session(
-                                        number
-                                    )
+                                session = create_live_session(
+                                    number
                                 )
 
                                 session_id = (
-                                    session[
-                                        "session_id"
-                                    ]
+                                    session["session_id"]
                                 )
 
-                                token = (
-                                    session[
-                                        "token"
-                                    ]
-                                )
+                                token = session["token"]
 
-                                saved = (
-                                    save_vip_session(
-                                        context,
-                                        number,
-                                        session_id
-                                    )
+                                saved = save_vip_session(
+                                    context,
+                                    number,
+                                    session_id
                                 )
 
                                 if saved:
-
                                     send_telegram_alert(
                                         number,
                                         desc,
@@ -2764,9 +1863,7 @@ def run_smart_monitor():
                                         page,
                                         session
                                     )
-
                                 else:
-
                                     remove_live_session(
                                         session_id
                                     )
@@ -2774,7 +1871,6 @@ def run_smart_monitor():
                                 break
 
                             if not found:
-
                                 print(
                                     "🔍 [MONITOR] "
                                     "لا يوجد VIP هذه المرة",
@@ -2782,23 +1878,16 @@ def run_smart_monitor():
                                 )
 
                     except Exception as e:
-
                         print(
-                            f"⚠️ [LOOP ERROR] "
-                            f"{repr(e)}",
+                            f"⚠️ [LOOP ERROR] {repr(e)}",
                             flush=True
                         )
 
                     finally:
-
                         if browser:
-
                             try:
-
                                 browser.close()
-
                             except Exception:
-
                                 pass
 
                     time.sleep(
@@ -2809,16 +1898,12 @@ def run_smart_monitor():
                     )
 
         except Exception as e:
-
             print(
-                f"❌ [PLAYWRIGHT ERROR] "
-                f"{repr(e)}",
+                f"❌ [PLAYWRIGHT ERROR] {repr(e)}",
                 flush=True
             )
 
-            time.sleep(
-                5
-            )
+            time.sleep(5)
 
 
 # ============================================================
@@ -2826,7 +1911,6 @@ def run_smart_monitor():
 # ============================================================
 
 if __name__ == "__main__":
-
     print(
         "🚀 [START] تشغيل Free Mobile VIP Bot",
         flush=True
