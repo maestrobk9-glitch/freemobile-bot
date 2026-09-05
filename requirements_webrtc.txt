@@ -2,7 +2,7 @@ Flask>=3.0,<4
 requests>=2.31,<3
 playwright==1.57.0
 aioice>=0.10,<1
-aiortc>=1.9,<2
-av>=12,<15
+aiortc==1.13.0
+av==14.2.0
 mss>=9,<11
 numpy>=2.0,<3
