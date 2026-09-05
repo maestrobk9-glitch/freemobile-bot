@@ -1,7 +1,7 @@
 import os
 
-# IMPORTANT: Render was previously pointing Playwright at /opt/render/project/src/pw-browsers.
-# Force the official Playwright Docker browser directory before importing Playwright.
+# Playwright browser location used by the Render Docker image.
+# MUST be set before importing Playwright.
 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/ms-playwright"
 os.environ.setdefault("PLAYWRIGHT_SKIP_BROWSER_GC", "1")
 os.environ.setdefault("DISPLAY", ":99")
@@ -358,13 +358,19 @@ function focusKeyboard(){keyboardSink.value='';try{keyboardSink.focus({preventSc
 async function connect(){
   if(pc){try{pc.close()}catch(_){}pc=null}
   status.textContent='🟡 WebRTC: جاري الاتصال...';
-  pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+  pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}],bundlePolicy:'max-bundle'});
   pc.addTransceiver('video',{direction:'recvonly'});
   dc=pc.createDataChannel('input',{ordered:true});
   dc.onopen=()=>{status.textContent='🟢 WebRTC متصل — تفاعل مباشر';send({command:'ping'})};
   dc.onclose=()=>{status.textContent='🟠 قناة الإدخال أُغلقت'};
   dc.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.type==='keyboard'&&m.editable){keyboardSink.inputMode=m.inputMode||'text';focusKeyboard();}if(m.type==='status')status.textContent=m.text;}catch(_){}};
   pc.ontrack=e=>{video.srcObject=e.streams[0];video.play().catch(()=>{})};
+  pc.oniceconnectionstatechange=()=>{
+    const s=pc.iceConnectionState;
+    if(s==='checking') status.textContent='🟡 WebRTC: فحص المسار...';
+    if(s==='connected'||s==='completed') status.textContent='🟢 WebRTC متصل — تفاعل مباشر';
+    if(s==='failed') status.textContent='🔴 WebRTC فشل — إعادة المحاولة';
+  };
   pc.onconnectionstatechange=()=>{if(['failed','disconnected','closed'].includes(pc.connectionState)){status.textContent='🔴 انقطع الاتصال — إعادة المحاولة';clearTimeout(reconnectTimer);reconnectTimer=setTimeout(connect,1500)}};
   const offer=await pc.createOffer();await pc.setLocalDescription(offer);
   await new Promise(resolve=>{if(pc.iceGatheringState==='complete')return resolve();const f=()=>{if(pc.iceGatheringState==='complete'){pc.removeEventListener('icegatheringstatechange',f);resolve()}};pc.addEventListener('icegatheringstatechange',f);setTimeout(resolve,5000)});
@@ -665,6 +671,7 @@ def home():
 
 def run_smart_monitor():
     print('🔥🔥🔥 [THREAD ACTIVE] محرك الفحص بدأ', flush=True)
+    # Do not override PLAYWRIGHT_BROWSERS_PATH here. It is fixed to /ms-playwright above.
     current_proxies = []
     proxy_refresh_time = 0
     while True:
@@ -686,18 +693,19 @@ def run_smart_monitor():
                 }
                 if proxy:
                     launch_args['proxy'] = {'server': proxy}
-                browser_path = p.chromium.executable_path
+                # Verify the exact Chromium binary before launch.
+                chromium_path = p.chromium.executable_path
                 print(
                     f'🔎 [PLAYWRIGHT] browsers_path={os.environ.get("PLAYWRIGHT_BROWSERS_PATH")} '
-                    f'chromium={browser_path} exists={os.path.exists(browser_path)}',
-                    flush=True
+                    f'| chromium={chromium_path} | exists={os.path.exists(chromium_path)}',
+                    flush=True,
                 )
-                if not os.path.exists(browser_path):
+                if not os.path.exists(chromium_path):
                     raise RuntimeError(
-                        f"Chromium غير موجود في {browser_path}. "
-                        "تأكد من تشغيل: PLAYWRIGHT_BROWSERS_PATH=/ms-playwright "
-                        "playwright install chromium داخل Docker."
+                        f'Chromium executable not found: {chromium_path}. '
+                        'Install Chromium for the same Playwright version in Docker.'
                     )
+
                 print(f'🚀 [BROWSER] تشغيل Chromium GUI/WebRTC | البروكسي: {proxy}', flush=True)
                 browser = p.chromium.launch(**launch_args)
                 context = browser.new_context(
@@ -722,33 +730,13 @@ def run_smart_monitor():
                             current_proxies.remove(proxy)
                         time.sleep(random.uniform(5,10) if '429' in err else random.uniform(3,6)); break
                     status = api_result.get('status'); data = api_result.get('data'); raw = api_result.get('raw','')
-                    if isinstance(data, list):
-                        numbers_list = data
-                    elif isinstance(data, dict):
-                        numbers_list = (
-                            data.get('msisdns')
-                            or data.get('numbers')
-                            or data.get('data')
-                            or []
-                        )
-                    else:
-                        numbers_list = []
-                    if not isinstance(numbers_list, list):
-                        numbers_list = []
+                    numbers_list = data if isinstance(data,list) else (data.get('msisdns',[]) if isinstance(data,dict) else [])
                     print(f'📱 [API] HTTP={status} | عدد الأرقام: {len(numbers_list)} | البروكسي: {proxy}', flush=True)
                     if not numbers_list and raw:
                         print(f'📄 [API RAW] {raw[:300]}', flush=True)
                     found = False
                     for item in numbers_list:
-                        if isinstance(item, dict):
-                            number = (
-                                item.get('value')
-                                or item.get('msisdn')
-                                or item.get('number')
-                                or item.get('phone')
-                            )
-                        else:
-                            number = str(item)
+                        number = item.get('value') if isinstance(item,dict) else str(item)
                         if not number:
                             continue
                         desc = evaluate_vip_expanded(number)
