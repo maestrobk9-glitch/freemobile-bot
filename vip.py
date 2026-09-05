@@ -30,22 +30,27 @@ CHAT_ID = os.environ.get("CHAT_ID", "")
 
 TARGET_URL = "https://mobile.free.fr/souscription/options"
 
-SESSION_DIR = "vip_sessions"
-os.makedirs(SESSION_DIR, exist_ok=True)
-
-# Remote Browser session = 5 minutes
+# لا نحفظ جلسات VIP على القرص.
+# الجلسة تبقى في الذاكرة فقط أثناء عمل Remote Browser.
 REMOTE_SESSION_TIMEOUT = 5 * 60
 
+# دورة الفحص بين المحاولات
 MIN_DELAY = 2.5
 MAX_DELAY = 4.5
 
+# إعدادات الصورة لتخفيف استهلاك Render والشبكة
+SCREEN_QUALITY = 50
+
+LIVE_SESSIONS = {}
+LIVE_SESSIONS_LOCK = threading.Lock()
+
 
 # ============================================================
-# AUTO PROXY FETCHER
+# PROXY FETCHER
 # ============================================================
 
 def fetch_fresh_proxies():
-    """جلب بروكسيات فرنسية مجانية وحية تلقائياً من الإنترنت"""
+    """جلب بروكسيات فرنسية HTTP من المصدر المستخدم سابقاً."""
     try:
         res = requests.get(
             "https://api.geonode.com/proxies?limit=10&format=json&country=FR&protocols=http",
@@ -56,16 +61,16 @@ def fetch_fresh_proxies():
             data = res.json().get("data", [])
             proxies = []
 
-            for p in data:
-                ip = p.get("ip")
-                port = p.get("port")
+            for item in data:
+                ip = item.get("ip")
+                port = item.get("port")
 
                 if ip and port:
                     proxies.append(f"http://{ip}:{port}")
 
             if proxies:
                 print(
-                    f"🌐 [PROXY] تم جلب {len(proxies)} بروكسي فرنسي بنجاح",
+                    f"🌐 [PROXY] تم جلب {len(proxies)} بروكسي فرنسي",
                     flush=True
                 )
                 return proxies
@@ -77,23 +82,18 @@ def fetch_fresh_proxies():
 
 
 # ============================================================
-# REMOTE SESSIONS
+# LIVE SESSIONS
 # ============================================================
-
-LIVE_SESSIONS = {}
-LIVE_SESSIONS_LOCK = threading.Lock()
-
 
 def create_live_session(number):
     session_id = uuid.uuid4().hex
-    token = secrets.token_urlsafe(32)
 
     data = {
         "session_id": session_id,
-        "token": token,
+        "token": secrets.token_urlsafe(32),
         "number": str(number),
         "created": time.time(),
-        "queue": queue.Queue(),
+        "queue": queue.Queue(maxsize=30),
         "closed": False
     }
 
@@ -147,7 +147,7 @@ def token_valid(session_id):
 
 
 # ============================================================
-# REMOTE COMMAND
+# REMOTE COMMAND QUEUE
 # ============================================================
 
 def send_remote_command(
@@ -155,18 +155,30 @@ def send_remote_command(
     token,
     command,
     payload=None,
-    timeout=10
+    timeout=6
 ):
     session = get_live_session(session_id)
 
     if not session:
-        return {"ok": False, "error": "SESSION_NOT_FOUND"}
+        return {
+            "ok": False,
+            "error": "SESSION_NOT_FOUND"
+        }
 
-    if not secrets.compare_digest(
-        str(token),
-        str(session["token"])
-    ):
-        return {"ok": False, "error": "INVALID_TOKEN"}
+    try:
+        if not secrets.compare_digest(
+            str(token),
+            str(session["token"])
+        ):
+            return {
+                "ok": False,
+                "error": "INVALID_TOKEN"
+            }
+    except Exception:
+        return {
+            "ok": False,
+            "error": "INVALID_TOKEN"
+        }
 
     event = threading.Event()
 
@@ -177,10 +189,19 @@ def send_remote_command(
         "result": None
     }
 
-    session["queue"].put(command_data)
+    try:
+        session["queue"].put_nowait(command_data)
+    except queue.Full:
+        return {
+            "ok": False,
+            "error": "COMMAND_QUEUE_FULL"
+        }
 
     if not event.wait(timeout):
-        return {"ok": False, "error": "COMMAND_TIMEOUT"}
+        return {
+            "ok": False,
+            "error": "COMMAND_TIMEOUT"
+        }
 
     return command_data.get("result") or {
         "ok": False,
@@ -189,82 +210,109 @@ def send_remote_command(
 
 
 # ============================================================
-# PLAYWRIGHT COMMAND PROCESSOR
+# PLAYWRIGHT HELPERS
 # ============================================================
 
+def coords_from_payload(page, payload):
+    viewport = page.viewport_size or {
+        "width": 390,
+        "height": 844
+    }
+
+    display_width = float(
+        payload.get("display_width") or 390
+    )
+    display_height = float(
+        payload.get("display_height") or 844
+    )
+
+    x = float(payload.get("x") or 0)
+    y = float(payload.get("y") or 0)
+
+    if display_width <= 0:
+        display_width = 390
+
+    if display_height <= 0:
+        display_height = 844
+
+    real_x = x * viewport["width"] / display_width
+    real_y = y * viewport["height"] / display_height
+
+    real_x = max(0, min(real_x, viewport["width"] - 1))
+    real_y = max(0, min(real_y, viewport["height"] - 1))
+
+    return real_x, real_y
+
+
 def process_remote_commands(page, session):
+    """
+    يعالج الأوامر بسرعة.
+    لا يوجد sleep داخل المعالج حتى لا تتراكم أوامر الهاتف.
+    """
     processed = 0
 
-    while processed < 10:
+    while processed < 25:
         try:
             command_data = session["queue"].get_nowait()
         except queue.Empty:
             break
 
         processed += 1
+
         command = command_data["command"]
-        payload = command_data.get("payload", {})
+        payload = command_data.get("payload") or {}
 
         try:
             if command == "screen":
                 image = page.screenshot(
                     type="jpeg",
-                    quality=55,
+                    quality=SCREEN_QUALITY,
                     animations="disabled"
                 )
+
                 command_data["result"] = {
                     "ok": True,
                     "image": image
                 }
 
-            elif command in ("click", "dblclick"):
-                x = float(payload.get("x", 0))
-                y = float(payload.get("y", 0))
+            elif command == "click":
+                x, y = coords_from_payload(page, payload)
+                page.mouse.click(x, y)
 
-                display_width = float(
-                    payload.get("display_width", 390)
-                )
-                display_height = float(
-                    payload.get("display_height", 844)
-                )
-
-                viewport = page.viewport_size or {
-                    "width": 390,
-                    "height": 844
+                command_data["result"] = {
+                    "ok": True
                 }
 
-                real_x = (
-                    x * viewport["width"] / display_width
-                )
-                real_y = (
-                    y * viewport["height"] / display_height
-                )
+            elif command == "dblclick":
+                x, y = coords_from_payload(page, payload)
+                page.mouse.dblclick(x, y)
 
-                if command == "dblclick":
-                    page.mouse.dblclick(real_x, real_y)
-                else:
-                    page.mouse.click(real_x, real_y)
-
-                command_data["result"] = {"ok": True}
+                command_data["result"] = {
+                    "ok": True
+                }
 
             elif command == "wheel":
-                dx = float(payload.get("dx", 0))
-                dy = float(payload.get("dy", 0))
+                dx = float(payload.get("dx") or 0)
+                dy = float(payload.get("dy") or 0)
 
                 page.mouse.wheel(dx, dy)
 
-                command_data["result"] = {"ok": True}
+                command_data["result"] = {
+                    "ok": True
+                }
 
             elif command == "type":
-                text = str(payload.get("text", ""))
+                text = str(payload.get("text") or "")
 
                 if text:
                     page.keyboard.insert_text(text)
 
-                command_data["result"] = {"ok": True}
+                command_data["result"] = {
+                    "ok": True
+                }
 
             elif command == "key":
-                key = str(payload.get("key", ""))
+                key = str(payload.get("key") or "")
 
                 ctrl = bool(payload.get("ctrl", False))
                 shift = bool(payload.get("shift", False))
@@ -288,19 +336,26 @@ def process_remote_commands(page, session):
                     combo = "+".join(modifiers + [key])
                     page.keyboard.press(combo)
 
-                command_data["result"] = {"ok": True}
+                command_data["result"] = {
+                    "ok": True
+                }
 
             elif command == "reload":
                 page.reload(
                     wait_until="domcontentloaded",
                     timeout=25000
                 )
-                time.sleep(1)
-                command_data["result"] = {"ok": True}
+
+                command_data["result"] = {
+                    "ok": True
+                }
 
             elif command == "close":
                 session["closed"] = True
-                command_data["result"] = {"ok": True}
+
+                command_data["result"] = {
+                    "ok": True
+                }
 
             else:
                 command_data["result"] = {
@@ -319,11 +374,7 @@ def process_remote_commands(page, session):
 
 
 # ============================================================
-# REMOTE BROWSER PAGE
-# IMPORTANT:
-# This uses a normal string + replace(), NOT an f-string.
-# Therefore JavaScript/CSS braces cannot cause the old
-# "single '}' is not allowed" SyntaxError.
+# REMOTE BROWSER HTML
 # ============================================================
 
 @app.route("/vip/<session_id>")
@@ -331,11 +382,14 @@ def remote_page(session_id):
     session = get_live_session(session_id)
 
     if not session:
-        return """
-        <h2 style="font-family:Arial;text-align:center">
-        ⚠️ انتهت جلسة Remote Browser
-        </h2>
-        """, 404
+        return (
+            """
+            <h2 style="font-family:Arial;text-align:center">
+            ⚠️ انتهت جلسة Remote Browser
+            </h2>
+            """,
+            404
+        )
 
     token = request.args.get("token", "")
 
@@ -346,26 +400,24 @@ def remote_page(session_id):
             str(session["token"])
         )
     ):
-        return """
-        <h2 style="font-family:Arial;text-align:center">
-        🔒 رابط غير صالح
-        </h2>
-        """, 403
+        return (
+            """
+            <h2 style="font-family:Arial;text-align:center">
+            🔒 رابط غير صالح
+            </h2>
+            """,
+            403
+        )
 
     number = html.escape(str(session["number"]))
-    sid = json.dumps(session_id)
-    tok = json.dumps(token)
 
-    page_html = r"""
+    page_html = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport"
-      content="width=device-width,
-               initial-scale=1,
-               maximum-scale=1,
-               user-scalable=no">
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 
 <title>Free Mobile Remote Browser</title>
 
@@ -374,28 +426,22 @@ def remote_page(session_id):
     box-sizing: border-box;
 }
 
-html,
-body {
+html, body {
     margin: 0;
     padding: 0;
-    width: 100%;
-    min-height: 100%;
+    background: #0f172a;
+    color: white;
+    font-family: Arial, sans-serif;
 }
 
 body {
-    background: #0f172a;
-    color: #fff;
-    font-family: Arial, sans-serif;
-    overscroll-behavior: none;
+    min-height: 100vh;
 }
 
 .header {
     background: #1e293b;
-    padding: 14px;
+    padding: 14px 10px;
     text-align: center;
-    position: sticky;
-    top: 0;
-    z-index: 10;
 }
 
 .number {
@@ -413,7 +459,7 @@ body {
 }
 
 .viewer {
-    padding: 15px;
+    padding: 10px;
     display: flex;
     justify-content: center;
 }
@@ -421,10 +467,10 @@ body {
 .screen-box {
     width: min(390px, 100%);
     background: #000;
-    border-radius: 15px;
+    border-radius: 12px;
     overflow: hidden;
-    box-shadow: 0 10px 40px rgba(0,0,0,.5);
     position: relative;
+    box-shadow: 0 8px 30px rgba(0,0,0,.45);
 }
 
 #screen {
@@ -436,35 +482,34 @@ body {
     -webkit-user-select: none;
     -webkit-touch-callout: none;
     touch-action: none;
-    cursor: pointer;
 }
 
 .controls {
     max-width: 500px;
     margin: auto;
-    padding: 0 15px 30px;
+    padding: 0 10px 25px;
 }
 
 .row {
     display: flex;
-    gap: 8px;
-    margin-top: 8px;
+    gap: 7px;
+    margin-top: 7px;
 }
 
 button {
     flex: 1;
     border: 0;
-    border-radius: 10px;
-    padding: 13px 8px;
+    border-radius: 9px;
+    padding: 11px 7px;
     background: #334155;
     color: white;
-    font-size: 15px;
+    font-size: 14px;
     cursor: pointer;
-    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
 }
 
 button:active {
-    transform: scale(.97);
+    transform: scale(.98);
 }
 
 .green {
@@ -483,9 +528,13 @@ input {
     flex: 1;
     min-width: 0;
     border: 0;
-    border-radius: 10px;
-    padding: 13px;
+    border-radius: 9px;
+    padding: 11px;
     font-size: 16px;
+}
+
+.small {
+    font-size: 12px;
 }
 </style>
 </head>
@@ -509,13 +558,11 @@ input {
 <div class="controls">
 
     <div class="row">
-        <button class="blue"
-                onclick="sendWheel(0, -350)">
+        <button class="blue" onclick="sendWheel(0, -500)">
             ⬆️ Scroll Up
         </button>
 
-        <button class="blue"
-                onclick="sendWheel(0, 350)">
+        <button class="blue" onclick="sendWheel(0, 500)">
             ⬇️ Scroll Down
         </button>
     </div>
@@ -526,10 +573,7 @@ input {
 
     <div class="row">
         <button onclick="sendKey('ArrowLeft')">←</button>
-        <button class="green"
-                onclick="sendKey('Enter')">
-            ENTER
-        </button>
+        <button class="green" onclick="sendKey('Enter')">ENTER</button>
         <button onclick="sendKey('ArrowRight')">→</button>
     </div>
 
@@ -538,13 +582,8 @@ input {
     </div>
 
     <div class="row">
-        <input id="textInput"
-               placeholder="اكتب نصاً...">
-
-        <button class="green"
-                onclick="sendText()">
-            إرسال
-        </button>
+        <input id="textInput" placeholder="اكتب نصاً...">
+        <button class="green" onclick="sendText()">إرسال</button>
     </div>
 
     <div class="row">
@@ -555,8 +594,7 @@ input {
     </div>
 
     <div class="row">
-        <button class="red"
-                onclick="closeBrowser()">
+        <button class="red" onclick="closeBrowser()">
             🛑 إغلاق المتصفح
         </button>
     </div>
@@ -564,8 +602,8 @@ input {
 </div>
 
 <script>
-const SESSION_ID = __SID__;
-const TOKEN = __TOKEN__;
+const SESSION_ID = "__SID__";
+const TOKEN = "__TOKEN__";
 
 const BASE =
     window.location.origin +
@@ -575,19 +613,25 @@ const BASE =
 const screen = document.getElementById("screen");
 const status = document.getElementById("status");
 
-let loading = false;
+let screenBusy = false;
+let lastObjectUrl = null;
+
+let pointerStart = null;
+let pointerMoved = false;
 
 
-/* ============================================================
-   SCREEN REFRESH
-   ============================================================ */
+/* ==========================================================
+   SCREEN
+   ========================================================== */
 
 async function refreshScreen() {
-    if (loading) return;
 
-    loading = true;
+    if (screenBusy) return;
+
+    screenBusy = true;
 
     try {
+
         const response = await fetch(
             BASE +
             "/screen?token=" +
@@ -601,297 +645,157 @@ async function refreshScreen() {
 
         if (!response.ok) {
             status.innerText = "🔴 الجلسة غير متاحة";
-            loading = false;
+            screenBusy = false;
             return;
         }
 
         const blob = await response.blob();
-        const oldSrc = screen.src;
 
-        screen.src = URL.createObjectURL(blob);
+        const objectUrl = URL.createObjectURL(blob);
 
-        if (
-            oldSrc &&
-            oldSrc.startsWith("blob:")
-        ) {
-            try {
-                URL.revokeObjectURL(oldSrc);
-            } catch (e) {}
-        }
+        const oldUrl = lastObjectUrl;
 
-        status.innerText =
-            "🟢 Remote Browser متصل";
+        screen.onload = function() {
+
+            if (oldUrl) {
+                URL.revokeObjectURL(oldUrl);
+            }
+        };
+
+        lastObjectUrl = objectUrl;
+        screen.src = objectUrl;
+
+        status.innerText = "🟢 Remote Browser متصل";
 
     } catch (e) {
-        status.innerText =
-            "🔴 انقطع الاتصال";
-    }
 
-    loading = false;
+        status.innerText = "🔴 انقطع الاتصال";
+
+    } finally {
+
+        screenBusy = false;
+    }
 }
 
 
-/* ============================================================
-   TOUCH / SWIPE
-   ============================================================ */
+/* ==========================================================
+   CLICK + SWIPE
+   ========================================================== */
 
-let pointerStartX = 0;
-let pointerStartY = 0;
-let pointerLastX = 0;
-let pointerLastY = 0;
+screen.addEventListener("pointerdown", function(event) {
 
-let isDragging = false;
-let movedDistance = 0;
+    event.preventDefault();
 
-let wheelSending = false;
-let pendingDy = 0;
+    pointerStart = {
+        x: event.clientX,
+        y: event.clientY,
+        time: Date.now()
+    };
+
+    pointerMoved = false;
+});
 
 
-/* ============================================================
-   POINTER DOWN
-   ============================================================ */
+screen.addEventListener("pointermove", function(event) {
 
-screen.addEventListener(
-    "pointerdown",
-    function(event) {
-        event.preventDefault();
+    if (!pointerStart) return;
 
-        pointerStartX = event.clientX;
-        pointerStartY = event.clientY;
+    const dx = event.clientX - pointerStart.x;
+    const dy = event.clientY - pointerStart.y;
 
-        pointerLastX = event.clientX;
-        pointerLastY = event.clientY;
-
-        isDragging = false;
-        movedDistance = 0;
-
-        try {
-            screen.setPointerCapture(
-                event.pointerId
-            );
-        } catch (e) {}
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+        pointerMoved = true;
     }
-);
+});
 
 
-/* ============================================================
-   POINTER MOVE
-   ============================================================ */
+screen.addEventListener("pointerup", async function(event) {
 
-screen.addEventListener(
-    "pointermove",
-    function(event) {
-        event.preventDefault();
+    if (!pointerStart) return;
 
-        const dx =
-            event.clientX - pointerLastX;
+    event.preventDefault();
 
-        const dy =
-            event.clientY - pointerLastY;
+    const start = pointerStart;
+    pointerStart = null;
 
-        pointerLastX = event.clientX;
-        pointerLastY = event.clientY;
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
 
-        movedDistance +=
-            Math.abs(dx) + Math.abs(dy);
+    const duration = Date.now() - start.time;
 
-        if (movedDistance < 8) {
-            return;
-        }
+    /*
+      إذا كان تحريكاً، نرسله كـ wheel.
+      هذا يجعل السحب على iPhone أسرع وأقرب للـ scroll الحقيقي.
+    */
+    if (pointerMoved) {
 
-        isDragging = true;
+        await sendWheel(
+            0,
+            -dy * 2.0
+        );
 
-        /*
-         * إصبع للأعلى = Scroll Down
-         * إصبع للأسفل = Scroll Up
-         */
-
-        pendingDy += -dy;
-
-        flushWheel();
+        return;
     }
-);
 
+    /*
+      Click عادي
+    */
+    const rect = screen.getBoundingClientRect();
 
-/* ============================================================
-   SEND SWIPE SCROLL
-   ============================================================ */
+    if (!rect.width || !rect.height) {
+        return;
+    }
 
-async function flushWheel() {
-    if (wheelSending) return;
-    if (Math.abs(pendingDy) < 1) return;
-
-    wheelSending = true;
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
 
     try {
-        while (Math.abs(pendingDy) >= 1) {
-            const amount = Math.max(
-                -150,
-                Math.min(150, pendingDy)
-            );
 
-            pendingDy -= amount;
-
-            await fetch(
-                BASE + "/wheel",
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-                    body: JSON.stringify({
-                        token: TOKEN,
-                        dx: 0,
-                        dy: amount
-                    })
-                }
-            );
-        }
-    } catch (e) {}
-
-    wheelSending = false;
-
-    setTimeout(
-        refreshScreen,
-        100
-    );
-}
-
-
-/* ============================================================
-   POINTER UP
-   ============================================================ */
-
-screen.addEventListener(
-    "pointerup",
-    async function(event) {
-        event.preventDefault();
+        await fetch(
+            BASE + "/click",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    token: TOKEN,
+                    x: x,
+                    y: y,
+                    display_width: rect.width,
+                    display_height: rect.height
+                })
+            }
+        );
 
         /*
-         * لا ترسل Click بعد السحب
-         */
+          تحديث سريع بعد click بدون انتظار طويل.
+        */
+        setTimeout(refreshScreen, 80);
 
-        if (isDragging) {
-            setTimeout(
-                refreshScreen,
-                150
-            );
-            return;
-        }
-
-        const rect =
-            screen.getBoundingClientRect();
-
-        if (
-            !rect.width ||
-            !rect.height
-        ) {
-            return;
-        }
-
-        const x =
-            event.clientX - rect.left;
-
-        const y =
-            event.clientY - rect.top;
-
-        try {
-            await fetch(
-                BASE + "/click",
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-                    body: JSON.stringify({
-                        token: TOKEN,
-                        x: x,
-                        y: y,
-                        display_width:
-                            rect.width,
-                        display_height:
-                            rect.height
-                    })
-                }
-            );
-
-            setTimeout(
-                refreshScreen,
-                250
-            );
-
-        } catch (e) {}
-    }
-);
+    } catch (e) {}
+});
 
 
-/* ============================================================
-   POINTER CANCEL
-   ============================================================ */
-
-screen.addEventListener(
-    "pointercancel",
-    function(event) {
-        isDragging = false;
-        pendingDy = 0;
-    }
-);
+screen.addEventListener("pointercancel", function() {
+    pointerStart = null;
+});
 
 
-/* ============================================================
-   WHEEL SUPPORT
-   ============================================================ */
-
-screen.addEventListener(
-    "wheel",
-    async function(event) {
-        event.preventDefault();
-
-        try {
-            await fetch(
-                BASE + "/wheel",
-                {
-                    method: "POST",
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-                    body: JSON.stringify({
-                        token: TOKEN,
-                        dx: event.deltaX,
-                        dy: event.deltaY
-                    })
-                }
-            );
-
-            setTimeout(
-                refreshScreen,
-                120
-            );
-
-        } catch (e) {}
-    },
-    {
-        passive: false
-    }
-);
-
-
-/* ============================================================
-   BUTTON SCROLL
-   ============================================================ */
+/* ==========================================================
+   WHEEL
+   ========================================================== */
 
 async function sendWheel(dx, dy) {
+
     try {
+
         await fetch(
             BASE + "/wheel",
             {
                 method: "POST",
                 headers: {
-                    "Content-Type":
-                        "application/json"
+                    "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
                     token: TOKEN,
@@ -901,28 +805,29 @@ async function sendWheel(dx, dy) {
             }
         );
 
-        setTimeout(
-            refreshScreen,
-            250
-        );
+        /*
+          إعادة الصورة بعد الـ scroll بسرعة.
+        */
+        setTimeout(refreshScreen, 80);
 
     } catch (e) {}
 }
 
 
-/* ============================================================
-   KEY
-   ============================================================ */
+/* ==========================================================
+   KEYS
+   ========================================================== */
 
 async function sendKey(key) {
+
     try {
+
         await fetch(
             BASE + "/key",
             {
                 method: "POST",
                 headers: {
-                    "Content-Type":
-                        "application/json"
+                    "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
                     token: TOKEN,
@@ -931,20 +836,18 @@ async function sendKey(key) {
             }
         );
 
-        setTimeout(
-            refreshScreen,
-            250
-        );
+        setTimeout(refreshScreen, 80);
 
     } catch (e) {}
 }
 
 
-/* ============================================================
+/* ==========================================================
    TEXT
-   ============================================================ */
+   ========================================================== */
 
 async function sendText() {
+
     const input =
         document.getElementById("textInput");
 
@@ -953,13 +856,13 @@ async function sendText() {
     if (!text) return;
 
     try {
+
         await fetch(
             BASE + "/type",
             {
                 method: "POST",
                 headers: {
-                    "Content-Type":
-                        "application/json"
+                    "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
                     token: TOKEN,
@@ -970,31 +873,28 @@ async function sendText() {
 
         input.value = "";
 
-        setTimeout(
-            refreshScreen,
-            250
-        );
+        setTimeout(refreshScreen, 80);
 
     } catch (e) {}
 }
 
 
-/* ============================================================
+/* ==========================================================
    RELOAD
-   ============================================================ */
+   ========================================================== */
 
 async function reloadPage() {
-    status.innerText =
-        "🔄 إعادة تحميل...";
+
+    status.innerText = "🔄 إعادة تحميل...";
 
     try {
+
         await fetch(
             BASE + "/reload",
             {
                 method: "POST",
                 headers: {
-                    "Content-Type":
-                        "application/json"
+                    "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
                     token: TOKEN
@@ -1002,36 +902,30 @@ async function reloadPage() {
             }
         );
 
-        setTimeout(
-            refreshScreen,
-            500
-        );
+        setTimeout(refreshScreen, 300);
 
     } catch (e) {}
 }
 
 
-/* ============================================================
+/* ==========================================================
    CLOSE
-   ============================================================ */
+   ========================================================== */
 
 async function closeBrowser() {
-    if (
-        !confirm(
-            "هل تريد إغلاق المتصفح؟"
-        )
-    ) {
+
+    if (!confirm("هل تريد إغلاق المتصفح؟")) {
         return;
     }
 
     try {
+
         await fetch(
             BASE + "/close",
             {
                 method: "POST",
                 headers: {
-                    "Content-Type":
-                        "application/json"
+                    "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
                     token: TOKEN
@@ -1046,28 +940,29 @@ async function closeBrowser() {
 }
 
 
-/* ============================================================
-   START
-   ============================================================ */
+/* ==========================================================
+   FAST SCREEN REFRESH
+   ========================================================== */
 
+/*
+   1200ms بدلاً من 700ms:
+   يقلل الضغط على Render، بينما click/swipe/key تقوم
+   بتحديث الصورة فوراً تقريباً بعد تنفيذ الأمر.
+*/
 refreshScreen();
+setInterval(refreshScreen, 1200);
 
-setInterval(
-    refreshScreen,
-    900
-);
 </script>
 
 </body>
 </html>
 """
 
-    # Inject dynamic values WITHOUT using an f-string.
     page_html = (
         page_html
         .replace("__NUMBER__", number)
-        .replace("__SID__", sid)
-        .replace("__TOKEN__", tok)
+        .replace("__SID__", json.dumps(session_id)[1:-1])
+        .replace("__TOKEN__", json.dumps(token)[1:-1])
     )
 
     response = make_response(page_html)
@@ -1089,6 +984,7 @@ setInterval(
 
 @app.route("/vip/<session_id>/screen")
 def remote_screen(session_id):
+
     session = token_valid(session_id)
 
     if not session:
@@ -1098,30 +994,29 @@ def remote_screen(session_id):
         session_id,
         session["token"],
         "screen",
-        timeout=8
+        timeout=6
     )
 
     if not result.get("ok"):
-        return result.get(
-            "error",
-            "SCREEN_ERROR"
-        ), 500
+        return result.get("error", "SCREEN_ERROR"), 500
 
     return Response(
         result["image"],
         mimetype="image/jpeg",
         headers={
             "Cache-Control":
-                "no-store, no-cache, must-revalidate"
+                "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache"
         }
     )
 
 
 # ============================================================
-# REMOTE JSON COMMAND
+# GENERIC REMOTE COMMAND
 # ============================================================
 
 def remote_json_command(session_id, command):
+
     session = token_valid(session_id)
 
     if not session:
@@ -1131,13 +1026,15 @@ def remote_json_command(session_id, command):
         }), 403
 
     data = request.get_json(silent=True) or {}
+
     data.pop("token", None)
 
     result = send_remote_command(
         session_id,
         session["token"],
         command,
-        data
+        data,
+        timeout=6
     )
 
     return jsonify(result)
@@ -1145,50 +1042,233 @@ def remote_json_command(session_id, command):
 
 @app.route("/vip/<session_id>/click", methods=["POST"])
 def remote_click(session_id):
-    return remote_json_command(
-        session_id,
-        "click"
-    )
+    return remote_json_command(session_id, "click")
 
 
 @app.route("/vip/<session_id>/wheel", methods=["POST"])
 def remote_wheel(session_id):
-    return remote_json_command(
-        session_id,
-        "wheel"
-    )
+    return remote_json_command(session_id, "wheel")
 
 
 @app.route("/vip/<session_id>/key", methods=["POST"])
 def remote_key(session_id):
-    return remote_json_command(
-        session_id,
-        "key"
-    )
+    return remote_json_command(session_id, "key")
 
 
 @app.route("/vip/<session_id>/type", methods=["POST"])
 def remote_type(session_id):
-    return remote_json_command(
-        session_id,
-        "type"
-    )
+    return remote_json_command(session_id, "type")
 
 
 @app.route("/vip/<session_id>/reload", methods=["POST"])
 def remote_reload(session_id):
-    return remote_json_command(
-        session_id,
-        "reload"
-    )
+    return remote_json_command(session_id, "reload")
 
 
 @app.route("/vip/<session_id>/close", methods=["POST"])
 def remote_close(session_id):
-    return remote_json_command(
-        session_id,
-        "close"
+    return remote_json_command(session_id, "close")
+
+
+# ============================================================
+# TELEGRAM
+# ============================================================
+
+def telegram_api(method, payload):
+    if not TELEGRAM_BOT_TOKEN:
+        return None
+
+    url = (
+        "https://api.telegram.org/bot"
+        + TELEGRAM_BOT_TOKEN
+        + "/"
+        + method
     )
+
+    try:
+        return requests.post(
+            url,
+            json=payload,
+            timeout=10
+        )
+    except Exception as e:
+        print(
+            f"⚠️ [TELEGRAM API ERROR] {repr(e)}",
+            flush=True
+        )
+
+    return None
+
+
+def send_telegram_alert(number, desc, session_id, token):
+
+    render_url = os.environ.get(
+        "RENDER_EXTERNAL_URL",
+        "https://freemobile-bot.onrender.com"
+    ).rstrip("/")
+
+    open_url = (
+        f"{render_url}/vip/"
+        f"{session_id}?token={token}"
+    )
+
+    message = (
+        "🔥 *رقم مميز VIP جديد!*\n\n"
+        f"📱 الرقم: `{number}`\n"
+        f"💎 التصنيف: {desc}\n\n"
+        "🖥️ اضغط لفتح Remote Browser."
+    )
+
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "🖥️ فتح Remote Browser",
+                    "url": open_url
+                }
+            ],
+            [
+                {
+                    "text": "❌ لا يعجبني — تخطي الرقم",
+                    "callback_data": f"skip:{session_id}"
+                }
+            ]
+        ]
+    }
+
+    if not TELEGRAM_BOT_TOKEN or not CHAT_ID:
+        return
+
+    response = telegram_api(
+        "sendMessage",
+        {
+            "chat_id": CHAT_ID,
+            "text": message,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+            "reply_markup": keyboard
+        }
+    )
+
+    if response is not None and response.status_code != 200:
+        print(
+            f"⚠️ [TELEGRAM] HTTP={response.status_code} "
+            f"{response.text[:300]}",
+            flush=True
+        )
+
+
+@app.route("/telegram/webhook", methods=["POST"])
+def telegram_webhook():
+
+    update = request.get_json(silent=True) or {}
+
+    callback = update.get("callback_query")
+
+    if not callback:
+        return jsonify({"ok": True})
+
+    callback_id = callback.get("id")
+    data = str(callback.get("data") or "")
+
+    if not data.startswith("skip:"):
+        return jsonify({"ok": True})
+
+    session_id = data[5:].strip()
+
+    session = get_live_session(session_id)
+
+    if session:
+        session["closed"] = True
+
+        # لا ننتظر انتهاء الخمس دقائق.
+        # وضع close في الطابور يجعل المتصفح يخرج فوراً.
+        try:
+            session["queue"].put_nowait({
+                "command": "close",
+                "payload": {},
+                "event": threading.Event(),
+                "result": None
+            })
+        except queue.Full:
+            pass
+
+        print(
+            f"⏭️ [SKIP] تم تخطي الرقم {session['number']}",
+            flush=True
+        )
+
+    if callback_id:
+        telegram_api(
+            "answerCallbackQuery",
+            {
+                "callback_query_id": callback_id,
+                "text": "⏭️ تم تخطي الرقم والعودة للبحث",
+                "show_alert": False
+            }
+        )
+
+    message = callback.get("message")
+
+    if message:
+        chat_id = message.get("chat", {}).get("id")
+        message_id = message.get("message_id")
+
+        if chat_id and message_id:
+            try:
+                telegram_api(
+                    "editMessageReplyMarkup",
+                    {
+                        "chat_id": chat_id,
+                        "message_id": message_id,
+                        "reply_markup": {
+                            "inline_keyboard": [
+                                [
+                                    {
+                                        "text": "⏭️ تم تخطي هذا الرقم",
+                                        "callback_data": "done"
+                                    }
+                                ]
+                            ]
+                        }
+                    }
+                )
+            except Exception:
+                pass
+
+    return jsonify({"ok": True})
+
+
+def configure_telegram_webhook():
+
+    if not TELEGRAM_BOT_TOKEN:
+        print(
+            "ℹ️ [TELEGRAM] لا يوجد TELEGRAM_BOT_TOKEN",
+            flush=True
+        )
+        return
+
+    render_url = os.environ.get(
+        "RENDER_EXTERNAL_URL",
+        "https://freemobile-bot.onrender.com"
+    ).rstrip("/")
+
+    webhook_url = render_url + "/telegram/webhook"
+
+    response = telegram_api(
+        "setWebhook",
+        {
+            "url": webhook_url,
+            "allowed_updates": ["callback_query"]
+        }
+    )
+
+    if response is not None:
+        print(
+            f"📨 [TELEGRAM WEBHOOK] "
+            f"HTTP={response.status_code}",
+            flush=True
+        )
 
 
 # ============================================================
@@ -1207,6 +1287,8 @@ def home():
     <body style="font-family:Arial;text-align:center;padding:50px;">
         <h2>🚀 Free Mobile VIP Bot</h2>
         <p>🟢 Bot يعمل</p>
+        <p>⚡ Remote Browser محسّن للاستجابة</p>
+        <p>⏱️ مدة الجلسة القصوى: 5 دقائق</p>
     </body>
     </html>
     """
@@ -1217,6 +1299,7 @@ def home():
 # ============================================================
 
 def evaluate_vip_expanded(num):
+
     clean = (
         str(num)
         .replace(" ", "")
@@ -1246,9 +1329,9 @@ def evaluate_vip_expanded(num):
 
     sequences = [
         "0123", "1234", "2345", "3456",
-        "4567", "5678", "6789", "9876",
-        "8765", "7654", "6543", "5432",
-        "4321", "3210"
+        "4567", "5678", "6789",
+        "9876", "8765", "7654",
+        "6543", "5432", "4321", "3210"
     ]
 
     for seq in sequences:
@@ -1275,6 +1358,7 @@ def evaluate_vip_expanded(num):
 # ============================================================
 
 def select_number(page, number):
+
     target = (
         str(number)
         .replace(" ", "")
@@ -1290,18 +1374,12 @@ def select_number(page, number):
         )
 
         for i in range(radios.count()):
+
             try:
                 radio = radios.nth(i)
 
-                value = (
-                    radio.get_attribute("value")
-                    or ""
-                )
-
-                radio_id = (
-                    radio.get_attribute("id")
-                    or ""
-                )
+                value = radio.get_attribute("value") or ""
+                radio_id = radio.get_attribute("id") or ""
 
                 combined = (
                     value + " " + radio_id
@@ -1331,11 +1409,14 @@ def select_number(page, number):
         selects = page.locator("select")
 
         for i in range(selects.count()):
+
             try:
                 select = selects.nth(i)
+
                 options = select.locator("option")
 
                 for j in range(options.count()):
+
                     try:
                         option = options.nth(j)
 
@@ -1344,10 +1425,7 @@ def select_number(page, number):
                             or ""
                         )
 
-                        text = (
-                            option.inner_text()
-                            or ""
-                        )
+                        text = option.inner_text() or ""
 
                         clean_value = (
                             value
@@ -1369,8 +1447,6 @@ def select_number(page, number):
                                 value=value,
                                 timeout=2000
                             )
-
-                            selected = True
 
                             print(
                                 f"🎯 [SELECT] تم اختيار {number}",
@@ -1395,345 +1471,63 @@ def select_number(page, number):
 
 
 # ============================================================
-# SAVE SESSION
-# ============================================================
-
-def save_vip_session(
-    context,
-    number,
-    session_id
-):
-    safe_number = "".join(
-        c for c in str(number)
-        if c.isdigit()
-    )
-
-    state_file = os.path.join(
-        SESSION_DIR,
-        f"{session_id}.json"
-    )
-
-    meta_file = os.path.join(
-        SESSION_DIR,
-        f"{session_id}.meta.json"
-    )
-
-    try:
-        context.storage_state(
-            path=state_file,
-            indexed_db=True
-        )
-
-        metadata = {
-            "session_id": session_id,
-            "number": safe_number,
-            "created": int(time.time()),
-            "state_file": state_file
-        }
-
-        with open(
-            meta_file,
-            "w",
-            encoding="utf-8"
-        ) as f:
-            json.dump(
-                metadata,
-                f,
-                ensure_ascii=False,
-                indent=2
-            )
-
-        print(
-            f"💾 [SESSION] تم حفظ جلسة {safe_number}",
-            flush=True
-        )
-
-        return True
-
-    except Exception as e:
-        print(
-            f"⚠️ [SESSION ERROR] {repr(e)}",
-            flush=True
-        )
-        return False
-
-
-# ============================================================
-# TELEGRAM ALERT
-# ============================================================
-
-def send_telegram_alert(
-    number,
-    desc,
-    session_id,
-    token
-):
-    render_url = os.environ.get(
-        "RENDER_EXTERNAL_URL",
-        "https://freemobile-bot.onrender.com"
-    ).rstrip("/")
-
-    open_url = (
-        f"{render_url}/vip/"
-        f"{session_id}?token={token}"
-    )
-
-    message = (
-        "🔥 *رقم مميز VIP جديد!*\n\n"
-        f"📱 الرقم: `{number}`\n"
-        f"💎 التصنيف: {desc}\n\n"
-        f"🖥️ [فتح Remote Browser]({open_url})"
-    )
-
-    if not TELEGRAM_BOT_TOKEN or not CHAT_ID:
-        return
-
-    url = (
-        "https://api.telegram.org/"
-        f"bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    )
-
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True,
-        "reply_markup": {
-            "inline_keyboard": [
-                [
-                    {
-                        "text": "🖥️ فتح Remote Browser",
-                        "url": open_url
-                    },
-                    {
-                        "text": "❌ لا يعجبني — تخطي",
-                        "callback_data": f"reject:{session_id}"
-                    }
-                ]
-            ]
-        }
-    }
-
-    try:
-        requests.post(
-            url,
-            json=payload,
-            timeout=10
-        )
-    except Exception as e:
-        print(
-            f"⚠️ [TELEGRAM ERROR] {repr(e)}",
-            flush=True
-        )
-
-
-# ============================================================
-# TELEGRAM CONTROLS
-# ============================================================
-
-def telegram_api(method, payload=None, timeout=15):
-    if not TELEGRAM_BOT_TOKEN:
-        return None
-
-    url = (
-        "https://api.telegram.org/"
-        f"bot{TELEGRAM_BOT_TOKEN}/{method}"
-    )
-
-    try:
-        response = requests.post(
-            url,
-            json=payload or {},
-            timeout=timeout
-        )
-        return response.json()
-    except Exception as e:
-        print(
-            f"⚠️ [TELEGRAM API ERROR] {repr(e)}",
-            flush=True
-        )
-        return None
-
-
-def telegram_callback_worker():
-    """استقبال زر رفض الرقم من Telegram وإغلاق الجلسة فوراً."""
-    if not TELEGRAM_BOT_TOKEN:
-        print("⚠️ [TELEGRAM] TELEGRAM_BOT_TOKEN غير موجود", flush=True)
-        return
-
-    offset = None
-
-    print(
-        "🤖 [TELEGRAM] زر تخطي/رفض الرقم مفعل",
-        flush=True
-    )
-
-    while True:
-        try:
-            payload = {
-                "timeout": 20,
-                "allowed_updates": ["callback_query"]
-            }
-
-            if offset is not None:
-                payload["offset"] = offset
-
-            result = telegram_api(
-                "getUpdates",
-                payload,
-                timeout=30
-            )
-
-            if not result or not result.get("ok"):
-                time.sleep(3)
-                continue
-
-            for update in result.get("result", []):
-                offset = update.get("update_id", 0) + 1
-
-                callback = update.get("callback_query") or {}
-                data = str(callback.get("data") or "")
-
-                if not data.startswith("reject:"):
-                    continue
-
-                session_id = data.split(":", 1)[1].strip()
-                session = get_live_session(session_id)
-
-                callback_id = callback.get("id")
-
-                if not session:
-                    telegram_api(
-                        "answerCallbackQuery",
-                        {
-                            "callback_query_id": callback_id,
-                            "text": "انتهت الجلسة بالفعل",
-                            "show_alert": False
-                        }
-                    )
-                    continue
-
-                # السماح فقط لنفس المحادثة المحددة في CHAT_ID
-                callback_message = callback.get("message") or {}
-                callback_chat = (callback_message.get("chat") or {}).get("id")
-
-                if CHAT_ID and str(callback_chat) != str(CHAT_ID):
-                    telegram_api(
-                        "answerCallbackQuery",
-                        {
-                            "callback_query_id": callback_id,
-                            "text": "غير مصرح",
-                            "show_alert": True
-                        }
-                    )
-                    continue
-
-                session["closed"] = True
-
-                telegram_api(
-                    "answerCallbackQuery",
-                    {
-                        "callback_query_id": callback_id,
-                        "text": "❌ تم تخطي الرقم والبحث مستمر",
-                        "show_alert": False
-                    }
-                )
-
-                # تحديث رسالة Telegram حتى تعرف أن الرقم تم تخطيه
-                message_id = callback_message.get("message_id")
-                chat_id = callback_chat
-
-                if message_id and chat_id:
-                    telegram_api(
-                        "editMessageReplyMarkup",
-                        {
-                            "chat_id": chat_id,
-                            "message_id": message_id,
-                            "reply_markup": {"inline_keyboard": []}
-                        }
-                    )
-
-                    telegram_api(
-                        "sendMessage",
-                        {
-                            "chat_id": chat_id,
-                            "text": f"⏭️ تم تخطي الرقم {session['number']} — البحث مستمر 🔍"
-                        }
-                    )
-
-                print(
-                    f"⏭️ [TELEGRAM SKIP] تم رفض الرقم {session['number']}",
-                    flush=True
-                )
-
-        except Exception as e:
-            print(
-                f"⚠️ [TELEGRAM POLL ERROR] {repr(e)}",
-                flush=True
-            )
-            time.sleep(3)
-
-
-# ============================================================
-# REMOTE SESSION
+# REMOTE SESSION LOOP
 # ============================================================
 
 def run_remote_session(page, session):
+
     started = time.time()
 
-    print(
-        "🖥️ [REMOTE] جلسة Remote Browser بدأت - المدة 5 دقائق",
-        flush=True
-    )
-
     try:
+
         while True:
-            process_remote_commands(
-                page,
-                session
-            )
 
             if session.get("closed"):
                 break
 
             if (
                 time.time() - started
-                > REMOTE_SESSION_TIMEOUT
+                >= REMOTE_SESSION_TIMEOUT
             ):
                 print(
-                    "⏰ [REMOTE] انتهت الجلسة بعد 5 دقائق",
+                    f"⏱️ [REMOTE] انتهت 5 دقائق "
+                    f"للرقم {session['number']}",
                     flush=True
                 )
                 break
 
-            try:
-                _ = page.url
-            except Exception:
-                break
+            process_remote_commands(
+                page,
+                session
+            )
 
-            time.sleep(0.08)
+            time.sleep(0.02)
 
     except Exception as e:
         print(
-            f"⚠️ [REMOTE SESSION ERROR] {repr(e)}",
+            f"⚠️ [REMOTE LOOP ERROR] {repr(e)}",
             flush=True
         )
 
     finally:
+
         session["closed"] = True
+
         remove_live_session(
             session["session_id"]
         )
 
 
 # ============================================================
-# GET NUMBERS
+# GET NUMBERS API
 # ============================================================
 
 def get_numbers(page):
-    result = page.evaluate(
+
+    return page.evaluate(
         """
         async () => {
+
             const urls = [
                 './api/msisdns?' + Date.now(),
                 '/api/msisdns?' + Date.now()
@@ -1742,17 +1536,22 @@ def get_numbers(page):
             let lastError = null;
 
             for (const url of urls) {
+
                 try {
-                    const res = await fetch(url, {
-                        method: 'GET',
-                        credentials: 'include',
-                        headers: {
-                            'X-Requested-With':
-                                'XMLHttpRequest',
-                            'Cache-Control':
-                                'no-cache'
+
+                    const res = await fetch(
+                        url,
+                        {
+                            method: 'GET',
+                            credentials: 'include',
+                            headers: {
+                                'X-Requested-With':
+                                    'XMLHttpRequest',
+                                'Cache-Control':
+                                    'no-cache'
+                            }
                         }
-                    });
+                    );
 
                     const text = await res.text();
 
@@ -1760,9 +1559,10 @@ def get_numbers(page):
 
                     try {
                         data = JSON.parse(text);
-                    } catch (e) {}
+                    } catch(e) {}
 
                     if (!res.ok) {
+
                         lastError =
                             'HTTP ' +
                             res.status +
@@ -1785,7 +1585,8 @@ def get_numbers(page):
                         raw: text.substring(0, 1000)
                     };
 
-                } catch (e) {
+                } catch(e) {
+
                     lastError = String(e);
                 }
             }
@@ -1799,14 +1600,13 @@ def get_numbers(page):
         """
     )
 
-    return result
-
 
 # ============================================================
-# SMART MONITOR
+# MAIN MONITOR
 # ============================================================
 
 def run_smart_monitor():
+
     print(
         "🔥🔥🔥 [THREAD ACTIVE] محرك الفحص بدأ",
         flush=True
@@ -1820,17 +1620,23 @@ def run_smart_monitor():
     proxy_refresh_time = 0
 
     while True:
+
         browser = None
 
         try:
+
             with sync_playwright() as p:
+
                 while True:
+
                     browser = None
                     context = None
                     page = None
 
                     try:
-                        # تحديث قائمة البروكسيات تلقائياً كل 10 دقائق
+
+                        # تحديث قائمة البروكسي كل 10 دقائق
+                        # كما هو في النسخة الأصلية.
                         if (
                             time.time() - proxy_refresh_time > 600
                             or not current_proxies
@@ -1856,7 +1662,6 @@ def run_smart_monitor():
                             ]
                         }
 
-                        # IP / Proxy logic intentionally unchanged
                         if proxy:
                             launch_args["proxy"] = {
                                 "server": proxy
@@ -1872,8 +1677,7 @@ def run_smart_monitor():
                                 "(iPhone; CPU iPhone OS 16_0 like Mac OS X) "
                                 "AppleWebKit/605.1.15 "
                                 "(KHTML, like Gecko) "
-                                "Version/16.0 "
-                                "Mobile/15E148 "
+                                "Version/16.0 Mobile/15E148 "
                                 "Safari/604.1"
                             ),
                             viewport={
@@ -1891,14 +1695,7 @@ def run_smart_monitor():
                             timeout=25000
                         )
 
-                        try:
-                            page.mouse.move(100, 100)
-                            page.mouse.down()
-                            page.mouse.up()
-                        except Exception:
-                            pass
-
-                        time.sleep(2.0)
+                        time.sleep(1.2)
 
                         api_result = get_numbers(page)
 
@@ -1906,16 +1703,18 @@ def run_smart_monitor():
                             isinstance(api_result, dict)
                             and api_result.get("error")
                         ):
+
                             err = str(
                                 api_result["error"]
                             )
 
                             print(
                                 f"⚠️ [API ERROR] {err} "
-                                f"(البروكسي المستخدم: {proxy})",
+                                f"(البروكسي: {proxy})",
                                 flush=True
                             )
 
+                            # إبقاء منطق الـ IP/Proxy كما هو.
                             if (
                                 proxy
                                 and proxy in current_proxies
@@ -1934,19 +1733,37 @@ def run_smart_monitor():
                                 )
 
                         else:
-                            status = api_result.get("status")
-                            data = api_result.get("data")
-                            raw = api_result.get("raw", "")
+
+                            status = api_result.get(
+                                "status"
+                            )
+
+                            data = api_result.get(
+                                "data"
+                            )
+
+                            raw = api_result.get(
+                                "raw",
+                                ""
+                            )
 
                             numbers_list = []
 
-                            if isinstance(data, list):
+                            if isinstance(
+                                data,
+                                list
+                            ):
                                 numbers_list = data
 
-                            elif isinstance(data, dict):
-                                numbers_list = data.get(
-                                    "msisdns",
-                                    []
+                            elif isinstance(
+                                data,
+                                dict
+                            ):
+                                numbers_list = (
+                                    data.get(
+                                        "msisdns",
+                                        []
+                                    )
                                 )
 
                             print(
@@ -1957,29 +1774,37 @@ def run_smart_monitor():
                                 flush=True
                             )
 
-                            if not numbers_list and raw:
+                            if (
+                                not numbers_list
+                                and raw
+                            ):
                                 print(
-                                    f"📄 [API RAW] {raw[:300]}",
+                                    f"📄 [API RAW] "
+                                    f"{raw[:300]}",
                                     flush=True
                                 )
 
                             found = False
 
                             for item in numbers_list:
-                                number = (
-                                    item.get("value")
-                                    if isinstance(
-                                        item,
-                                        dict
+
+                                if isinstance(
+                                    item,
+                                    dict
+                                ):
+                                    number = item.get(
+                                        "value"
                                     )
-                                    else str(item)
-                                )
+                                else:
+                                    number = str(item)
 
                                 if not number:
                                     continue
 
-                                desc = evaluate_vip_expanded(
-                                    number
+                                desc = (
+                                    evaluate_vip_expanded(
+                                        number
+                                    )
                                 )
 
                                 if not desc:
@@ -1988,28 +1813,35 @@ def run_smart_monitor():
                                 found = True
 
                                 print(
-                                    f"🔥🔥🔥 VIP FOUND: {number}",
+                                    f"🔥🔥🔥 VIP FOUND: "
+                                    f"{number}",
                                     flush=True
                                 )
 
+                                # اختيار الرقم في الصفحة
                                 select_number(
                                     page,
                                     number
                                 )
 
-                                session = create_live_session(
-                                    number
+                                session = (
+                                    create_live_session(
+                                        number
+                                    )
                                 )
 
                                 session_id = (
-                                    session["session_id"]
+                                    session[
+                                        "session_id"
+                                    ]
                                 )
 
-                                token = session["token"]
+                                token = session[
+                                    "token"
+                                ]
 
-                                # لا نحفظ Storage State على القرص لكل رقم.
-                                # الجلسة تبقى في الذاكرة فقط، وإذا ضغطت "تخطي"
-                                # يتم إغلاقها فوراً والعودة للبحث عن رقم جديد.
+                                # لا يوجد save_vip_session
+                                # ولا تخزين JSON.
                                 send_telegram_alert(
                                     number,
                                     desc,
@@ -2017,6 +1849,8 @@ def run_smart_monitor():
                                     token
                                 )
 
+                                # ينتظر 5 دقائق كحد أقصى
+                                # أو يخرج فور ضغط Skip.
                                 run_remote_session(
                                     page,
                                     session
@@ -2025,6 +1859,7 @@ def run_smart_monitor():
                                 break
 
                             if not found:
+
                                 print(
                                     "🔍 [MONITOR] "
                                     "لا يوجد VIP هذه المرة",
@@ -2032,13 +1867,17 @@ def run_smart_monitor():
                                 )
 
                     except Exception as e:
+
                         print(
-                            f"⚠️ [LOOP ERROR] {repr(e)}",
+                            f"⚠️ [LOOP ERROR] "
+                            f"{repr(e)}",
                             flush=True
                         )
 
                     finally:
+
                         if browser:
+
                             try:
                                 browser.close()
                             except Exception:
@@ -2052,8 +1891,10 @@ def run_smart_monitor():
                     )
 
         except Exception as e:
+
             print(
-                f"❌ [PLAYWRIGHT ERROR] {repr(e)}",
+                f"❌ [PLAYWRIGHT ERROR] "
+                f"{repr(e)}",
                 flush=True
             )
 
@@ -2065,16 +1906,20 @@ def run_smart_monitor():
 # ============================================================
 
 if __name__ == "__main__":
+
     print(
         "🚀 [START] تشغيل Free Mobile VIP Bot",
         flush=True
     )
 
-    telegram_thread = threading.Thread(
-        target=telegram_callback_worker,
-        daemon=True
-    )
-    telegram_thread.start()
+    # Telegram webhook للزر "تخطي"
+    try:
+        configure_telegram_webhook()
+    except Exception as e:
+        print(
+            f"⚠️ [WEBHOOK ERROR] {repr(e)}",
+            flush=True
+        )
 
     monitor_thread = threading.Thread(
         target=run_smart_monitor,
