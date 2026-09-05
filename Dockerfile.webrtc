@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/playwright/python:v1.57.0-noble
 
-ENV PYTHONUNBUFFERED=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PYTHONUNBUFFERED=1
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -25,6 +25,8 @@ WORKDIR /app
 COPY requirements_webrtc.txt /app/requirements.txt
 
 RUN pip install --no-cache-dir -r /app/requirements.txt
+
+RUN PLAYWRIGHT_BROWSERS_PATH=/ms-playwright playwright install chromium
 
 COPY vip_webrtc.py /app/vip_webrtc.py
 COPY start_webrtc.sh /app/start_webrtc.sh
