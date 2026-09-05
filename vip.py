@@ -209,7 +209,8 @@ def process_remote_commands(page, session):
             if command == "screen":
                 image = page.screenshot(
                     type="jpeg",
-                    quality=72
+                    quality=55,
+                    animations="disabled"
                 )
                 command_data["result"] = {
                     "ok": True,
@@ -1053,7 +1054,7 @@ refreshScreen();
 
 setInterval(
     refreshScreen,
-    700
+    900
 );
 </script>
 
@@ -1496,7 +1497,21 @@ def send_telegram_alert(
         "chat_id": CHAT_ID,
         "text": message,
         "parse_mode": "Markdown",
-        "disable_web_page_preview": True
+        "disable_web_page_preview": True,
+        "reply_markup": {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "🖥️ فتح Remote Browser",
+                        "url": open_url
+                    },
+                    {
+                        "text": "❌ لا يعجبني — تخطي",
+                        "callback_data": f"reject:{session_id}"
+                    }
+                ]
+            ]
+        }
     }
 
     try:
@@ -1510,6 +1525,153 @@ def send_telegram_alert(
             f"⚠️ [TELEGRAM ERROR] {repr(e)}",
             flush=True
         )
+
+
+# ============================================================
+# TELEGRAM CONTROLS
+# ============================================================
+
+def telegram_api(method, payload=None, timeout=15):
+    if not TELEGRAM_BOT_TOKEN:
+        return None
+
+    url = (
+        "https://api.telegram.org/"
+        f"bot{TELEGRAM_BOT_TOKEN}/{method}"
+    )
+
+    try:
+        response = requests.post(
+            url,
+            json=payload or {},
+            timeout=timeout
+        )
+        return response.json()
+    except Exception as e:
+        print(
+            f"⚠️ [TELEGRAM API ERROR] {repr(e)}",
+            flush=True
+        )
+        return None
+
+
+def telegram_callback_worker():
+    """استقبال زر رفض الرقم من Telegram وإغلاق الجلسة فوراً."""
+    if not TELEGRAM_BOT_TOKEN:
+        print("⚠️ [TELEGRAM] TELEGRAM_BOT_TOKEN غير موجود", flush=True)
+        return
+
+    offset = None
+
+    print(
+        "🤖 [TELEGRAM] زر تخطي/رفض الرقم مفعل",
+        flush=True
+    )
+
+    while True:
+        try:
+            payload = {
+                "timeout": 20,
+                "allowed_updates": ["callback_query"]
+            }
+
+            if offset is not None:
+                payload["offset"] = offset
+
+            result = telegram_api(
+                "getUpdates",
+                payload,
+                timeout=30
+            )
+
+            if not result or not result.get("ok"):
+                time.sleep(3)
+                continue
+
+            for update in result.get("result", []):
+                offset = update.get("update_id", 0) + 1
+
+                callback = update.get("callback_query") or {}
+                data = str(callback.get("data") or "")
+
+                if not data.startswith("reject:"):
+                    continue
+
+                session_id = data.split(":", 1)[1].strip()
+                session = get_live_session(session_id)
+
+                callback_id = callback.get("id")
+
+                if not session:
+                    telegram_api(
+                        "answerCallbackQuery",
+                        {
+                            "callback_query_id": callback_id,
+                            "text": "انتهت الجلسة بالفعل",
+                            "show_alert": False
+                        }
+                    )
+                    continue
+
+                # السماح فقط لنفس المحادثة المحددة في CHAT_ID
+                callback_message = callback.get("message") or {}
+                callback_chat = (callback_message.get("chat") or {}).get("id")
+
+                if CHAT_ID and str(callback_chat) != str(CHAT_ID):
+                    telegram_api(
+                        "answerCallbackQuery",
+                        {
+                            "callback_query_id": callback_id,
+                            "text": "غير مصرح",
+                            "show_alert": True
+                        }
+                    )
+                    continue
+
+                session["closed"] = True
+
+                telegram_api(
+                    "answerCallbackQuery",
+                    {
+                        "callback_query_id": callback_id,
+                        "text": "❌ تم تخطي الرقم والبحث مستمر",
+                        "show_alert": False
+                    }
+                )
+
+                # تحديث رسالة Telegram حتى تعرف أن الرقم تم تخطيه
+                message_id = callback_message.get("message_id")
+                chat_id = callback_chat
+
+                if message_id and chat_id:
+                    telegram_api(
+                        "editMessageReplyMarkup",
+                        {
+                            "chat_id": chat_id,
+                            "message_id": message_id,
+                            "reply_markup": {"inline_keyboard": []}
+                        }
+                    )
+
+                    telegram_api(
+                        "sendMessage",
+                        {
+                            "chat_id": chat_id,
+                            "text": f"⏭️ تم تخطي الرقم {session['number']} — البحث مستمر 🔍"
+                        }
+                    )
+
+                print(
+                    f"⏭️ [TELEGRAM SKIP] تم رفض الرقم {session['number']}",
+                    flush=True
+                )
+
+        except Exception as e:
+            print(
+                f"⚠️ [TELEGRAM POLL ERROR] {repr(e)}",
+                flush=True
+            )
+            time.sleep(3)
 
 
 # ============================================================
@@ -1845,28 +2007,20 @@ def run_smart_monitor():
 
                                 token = session["token"]
 
-                                saved = save_vip_session(
-                                    context,
+                                # لا نحفظ Storage State على القرص لكل رقم.
+                                # الجلسة تبقى في الذاكرة فقط، وإذا ضغطت "تخطي"
+                                # يتم إغلاقها فوراً والعودة للبحث عن رقم جديد.
+                                send_telegram_alert(
                                     number,
-                                    session_id
+                                    desc,
+                                    session_id,
+                                    token
                                 )
 
-                                if saved:
-                                    send_telegram_alert(
-                                        number,
-                                        desc,
-                                        session_id,
-                                        token
-                                    )
-
-                                    run_remote_session(
-                                        page,
-                                        session
-                                    )
-                                else:
-                                    remove_live_session(
-                                        session_id
-                                    )
+                                run_remote_session(
+                                    page,
+                                    session
+                                )
 
                                 break
 
@@ -1915,6 +2069,12 @@ if __name__ == "__main__":
         "🚀 [START] تشغيل Free Mobile VIP Bot",
         flush=True
     )
+
+    telegram_thread = threading.Thread(
+        target=telegram_callback_worker,
+        daemon=True
+    )
+    telegram_thread.start()
 
     monitor_thread = threading.Thread(
         target=run_smart_monitor,
