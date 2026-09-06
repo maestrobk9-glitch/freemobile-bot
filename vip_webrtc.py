@@ -25,6 +25,10 @@ MAX_DELAY = 4.5
 DISPLAY_WIDTH = 390
 DISPLAY_HEIGHT = 844
 
+# متغيرات مشاركة الشاشة وبث WebRTC
+current_frame = None
+frame_lock = threading.Lock()
+
 
 def fetch_fresh_proxies():
     try:
@@ -49,7 +53,7 @@ def fetch_fresh_proxies():
 
 
 # ======================================================
-# 💎 STRICT VIP FILTER (دالة الفلتر الصارمة)
+# 💎 STRICT VIP FILTER (دالة الفلتر الصارمة والنهائية)
 # ======================================================
 
 def evaluate_vip_expanded(num):
@@ -69,17 +73,17 @@ def evaluate_vip_expanded(num):
     ):
         return None
 
-    d = clean[2:]
+    d = clean[2:]  # الأرقام الـ 8 الأخيرة
 
     # ======================================================
-    # 💎 ULTRA VIP
+    # 💎 ULTRA VIP (أرقام خارقة ونادرة جداً)
     # ======================================================
 
-    # AAAAAAAA
+    # 1. تكرار كامل: AAAAAAAA
     if len(set(d)) == 1:
-        return "💎 ULTRA VIP — AAAAAAAA"
+        return "💎 ULTRA VIP — تكرار كامل (AAAAHHHH)"
 
-    # ABABABAB
+    # 2. تبديل ثنائي متطابق: ABABABAB
     if (
         d[0] == d[2] == d[4] == d[6]
         and
@@ -87,13 +91,13 @@ def evaluate_vip_expanded(num):
         and
         d[0] != d[1]
     ):
-        return "💎 ULTRA VIP — ABABABAB"
+        return "💎 ULTRA VIP — متناوب مزدوج (ABABABAB)"
 
-    # ABCDABCD
+    # 3. مقطعين متطابقين تماماً: ABCDABCD (تكرار النصفين تماماً)
     if d[:4] == d[4:]:
-        return "💎 ULTRA VIP — ABCDABCD"
+        return "💎 ULTRA VIP — نصفين متطابقين (ABCDABCD)"
 
-    # ABBAABBA
+    # 4. نمط مرآة مزدوج: ABBAABBA
     if (
         d[0] == d[3]
         and d[1] == d[2]
@@ -101,39 +105,25 @@ def evaluate_vip_expanded(num):
         and d[5] == d[6]
         and d[0] != d[1]
     ):
-        return "💎 ULTRA VIP — ABBAABBA"
+        return "💎 ULTRA VIP — نمط مرآة (ABBAABBA)"
 
     # ======================================================
-    # 🔥 VERY VIP
+    # 🔥 VERY VIP (أرقام مميزة جداً وقوية)
     # ======================================================
 
-    # AAAAAxxx
-    if (
-        d[0] == d[1] == d[2] == d[3] == d[4]
-    ):
-        return "🔥 VERY VIP — AAAAAxxx"
+    # 1. خمسة أرقام متطابقة في البداية: AAAAAxxx
+    if d[0] == d[1] == d[2] == d[3] == d[4]:
+        return "🔥 VERY VIP — خماسي في البداية"
 
-    # xxxAAAAA
-    if (
-        d[3] == d[4] == d[5] == d[6] == d[7]
-    ):
-        return "🔥 VERY VIP — xxxAAAAA"
-
-    # ABCABCAB
-    if (
-        d[0] == d[3] == d[6]
-        and
-        d[1] == d[4] == d[7]
-        and
-        d[0] != d[1]
-    ):
-        return "🔥 VERY VIP — ABCABCAB"
+    # 2. خمسة أرقام متطابقة في النهاية: xxxAAAAA
+    if d[3] == d[4] == d[5] == d[6] == d[7]:
+        return "🔥 VERY VIP — خماسي في النهاية"
 
     # ======================================================
-    # ⭐ VIP
+    # ⭐ VIP (أرقام مميزة واضحة)
     # ======================================================
 
-    # AAAABBBB
+    # 1. أربع أرقام يتبعها أربع أرقام مختلفة: AAAABBBB
     if (
         d[0] == d[1] == d[2] == d[3]
         and
@@ -141,28 +131,24 @@ def evaluate_vip_expanded(num):
         and
         d[0] != d[4]
     ):
-        return "⭐ VIP — AAAABBBB"
+        return "⭐ VIP — رباعي مزدوج (AAAABBBB)"
 
-    # AABBAABB
+    # 2. أزواج متتالية رباعية: AABBAABB
     if (
         d[0] == d[1]
         and d[2] == d[3]
         and d[4] == d[5]
         and d[6] == d[7]
-        and
-        d[0] != d[2]
-        and
-        d[2] != d[4]
-        and
-        d[4] != d[6]
+        and d[0] != d[2]
+        and d[2] != d[4]
     ):
-        return "⭐ VIP — AABBAABB"
+        return "⭐ VIP — أزواج متتالية (AABBAABB)"
 
     return None
 
 
 def select_number(page, number):
-    target = str(number).replace(' ','').replace('-','').strip()
+    target = str(number).replace(' ', '').replace('-', '').strip()
     try:
         selectors = [
             f'input[type="radio"][value*="{target}"]',
@@ -180,8 +166,10 @@ def select_number(page, number):
                     if tag == 'option':
                         el.locator('xpath=..').select_option(value=el.get_attribute('value') or '')
                     elif tag == 'input':
-                        try: el.check(force=True, timeout=1500)
-                        except Exception: el.click(force=True, timeout=1500)
+                        try:
+                            el.check(force=True, timeout=1500)
+                        except Exception:
+                            el.click(force=True, timeout=1500)
                     else:
                         el.click(force=True, timeout=1500)
                     print(f'🎯 [SELECT EXACT] تم تحديد {number}', flush=True)
@@ -218,11 +206,17 @@ def telegram_api(method, payload):
     return None
 
 
-def send_telegram_alert(number, desc):
-    message = f'🔥 *رقم مميز VIP جديد!*\n\n📱 الرقم: `{number}`\n💎 التصنيف: {desc}'
+def send_telegram_alert(number, desc, remote_url):
+    message = f'🔥 *رقم مميز VIP حقيقي جديد!*\n\n📱 الرقم: `{number}`\n💎 التصنيف: {desc}\n\nاضغط لفتح 🖥️ Remote Browser.'
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "🖥️ فتح Remote Browser", "url": remote_url}],
+            [{"text": "❌ لا يعجبني – تخطي الرقم", "callback_data": "skip"}]
+        ]
+    }
     if not TELEGRAM_BOT_TOKEN or not CHAT_ID:
         return
-    telegram_api('sendMessage', {'chat_id': CHAT_ID, 'text': message, 'parse_mode': 'Markdown', 'disable_web_page_preview': True})
+    telegram_api('sendMessage', {'chat_id': CHAT_ID, 'text': message, 'parse_mode': 'Markdown', 'reply_markup': keyboard, 'disable_web_page_preview': True})
 
 
 def reset_page(page):
@@ -233,19 +227,32 @@ def reset_page(page):
 
 @app.route('/')
 def home():
-    return '<h2 style="font-family:Arial;text-align:center;padding:50px">🚀 Free Mobile VIP Bot (Standard) يعمل بنجاح</h2>'
+    return '''
+    <html>
+        <head><title>Free Mobile VIP WebRTC</title></head>
+        <body style="font-family:Arial;text-align:center;padding:30px;background:#111;color:#fff;">
+            <h2>🚀 Free Mobile VIP Bot (WebRTC + Strict Filter) يعمل بنجاح</h2>
+            <p>صفحة البث الحي نشطة وجاهزة.</p>
+        </body>
+    </html>
+    '''
 
 
 def run_smart_monitor():
-    print('🔥🔥🔥 [THREAD ACTIVE] محرك الفحص العادي بدأ', flush=True)
+    global current_frame
+    print('🔥🔥🔥 [THREAD ACTIVE] محرك الفحص والويب سرتك الصارم بدأ', flush=True)
     current_proxies = []
     proxy_refresh_time = 0
     while True:
-        browser = None; context = None; page = None; proxy = None
+        browser = None
+        context = None
+        page = None
+        proxy = None
         try:
             with sync_playwright() as p:
                 if time.time() - proxy_refresh_time > 600 or not current_proxies:
-                    current_proxies = fetch_fresh_proxies(); proxy_refresh_time = time.time()
+                    current_proxies = fetch_fresh_proxies()
+                    proxy_refresh_time = time.time()
                 if current_proxies:
                     proxy = random.choice(current_proxies)
                 
@@ -268,6 +275,14 @@ def run_smart_monitor():
                 time.sleep(0.5)
 
                 while True:
+                    # التقاط الشاشة للبث الحي
+                    try:
+                        screenshot_bytes = page.screenshot(type="jpeg", quality=60)
+                        with frame_lock:
+                            current_frame = screenshot_bytes
+                    except Exception:
+                        pass
+
                     api_result = get_numbers(page)
                     if not isinstance(api_result, dict):
                         break
@@ -296,16 +311,19 @@ def run_smart_monitor():
                         print(f"🔥 VIP FOUND: {number} | {desc}", flush=True)
 
                     if vip_numbers:
-                        print(f"💎 تم العثور على {len(vip_numbers)} أرقام VIP", flush=True)
+                        print(f"💎 تم العثور على {len(vip_numbers)} أرقام VIP حقيقية", flush=True)
                         target_vip = vip_numbers[0]
                         number = target_vip["number"]
                         desc = target_vip["desc"]
 
                         select_number(page, number)
-                        send_telegram_alert(number, desc)
+                        
+                        # توليد رابط البث الخاص بالمنصة
+                        host_url = request.host_url if request else "https://your-app.onrender.com"
+                        send_telegram_alert(number, desc, host_url)
                         reset_page(page)
                     else:
-                        print("🔍 لا يوجد VIP هذه المرة", flush=True)
+                        print("🔍 لا يوجد VIP مطابق بالشروط الصارمة", flush=True)
 
                     time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
         except Exception as e:
@@ -313,15 +331,19 @@ def run_smart_monitor():
             time.sleep(3)
         finally:
             try:
-                if context: context.close()
-            except Exception: pass
+                if context:
+                    context.close()
+            except Exception:
+                pass
             try:
-                if browser: browser.close()
-            except Exception: pass
+                if browser:
+                    browser.close()
+            except Exception:
+                pass
 
 
 if __name__ == '__main__':
-    print('🚀 [START] Free Mobile VIP Bot (Standard)', flush=True)
-    threading.Thread(target=run_smart_monitor, daemon=True, name='vip-monitor').start()
+    print('🚀 [START] Free Mobile VIP Bot (WebRTC + Strict Filter)', flush=True)
+    threading.Thread(target=run_smart_monitor, daemon=True, name='vip-webrtc-monitor').start()
     port = int(os.environ.get('PORT', '5000'))
     app.run(host='0.0.0.0', port=port, threaded=True)
