@@ -83,7 +83,6 @@ def rtc_configuration():
             username=TURN_USERNAME or None,
             credential=TURN_CREDENTIAL or None,
         ))
-    # STUN helps discover public candidates, but it is not a TURN relay.
     servers.append(RTCIceServer(urls=["stun:stun.l.google.com:19302"]))
     return RTCConfiguration(iceServers=servers)
 
@@ -109,7 +108,6 @@ class ScreenTrack(MediaStreamTrack):
             raise asyncio.CancelledError
         try:
             shot = self.sct.grab(self.monitor)
-            # MSS returns BGRA. Drop alpha and convert to RGB for PyAV.
             rgb = np.asarray(shot, dtype=np.uint8)[..., :3][:, :, ::-1]
             frame = VideoFrame.from_ndarray(rgb, format="rgb24")
             frame.pts = pts
@@ -417,7 +415,6 @@ async def handle_rtc_offer(session, offer_sdp, offer_type):
 
     @pc.on("datachannel")
     def on_datachannel(channel):
-        # The browser creates the channel; the server receives it here.
         session['rtc_channel'] = channel
         session['rtc_connected'] = True
         send_rtc_json(session, {'type': 'status', 'text': '🟢 WebRTC متصل — تفاعل مباشر'})
@@ -526,19 +523,149 @@ def install_fast_routes(context):
     context.route('**/*', handler)
 
 
+# ============================================================
+# STRICT VIP FILTER (UPDATED)
+# ============================================================
+
 def evaluate_vip_expanded(num):
-    clean = str(num).replace(' ','').replace('-','').strip()
-    if not (len(clean) == 10 and (clean.startswith('06') or clean.startswith('07'))):
+    """
+    STRICT VIP FILTER
+
+    ULTRA VIP:
+      AAAAAAAA
+      ABABABAB
+      ABCDABCD
+      ABBAABBA
+      Palindrome قوي
+
+    SUPER VIP:
+      AAAABBBB
+      AABBCCDD
+      AAAAxxxx
+      xxxxAAAA
+
+    VIP:
+      AAAAAxxx
+      xxxAAAAA
+      AABBAABB
+
+    أي رقم لا يطابق نمطاً واضحاً => None
+    """
+    clean = (
+        str(num)
+        .replace(" ", "")
+        .replace("-", "")
+        .strip()
+    )
+
+    if len(clean) != 10:
         return None
+
+    if not (clean.startswith("06") or clean.startswith("07")):
+        return None
+
     d = clean[2:]
-    if len(set(d)) <= 4: return 'تنوع منخفض للأرقام (مميز)'
-    if d == d[::-1]: return 'مرآة متناظرة كاملة (Palindrome)'
-    if d[:4] == d[4:]: return 'نصفين متطابقين تماماً'
-    sequences = ['0123','1234','2345','3456','4567','5678','6789','9876','8765','7654','6543','5432','4321','3210']
-    for seq in sequences:
-        if seq in d: return 'تسلسل أرقام متتالي'
-    if len(set(d[-4:])) <= 2 or len(set(d[:4])) <= 2: return 'تكرار عالي في الأطراف'
-    if d[0] == d[1] == d[2] or d[-3] == d[-2] == d[-1]: return 'ثلاثية متتالية'
+
+    if len(d) != 8:
+        return None
+
+    # 💎 ULTRA VIP
+    if len(set(d)) == 1:
+        return "💎 ULTRA VIP — AAAAAAAA"
+
+    if (
+        d[0] == d[2] == d[4] == d[6]
+        and
+        d[1] == d[3] == d[5] == d[7]
+        and
+        d[0] != d[1]
+    ):
+        return "💎 ULTRA VIP — ABABABAB"
+
+    if d[:4] == d[4:]:
+        return "💎 ULTRA VIP — ABCDABCD"
+
+    if (
+        d[:4] == d[4:]
+        and
+        d[0] == d[3]
+        and
+        d[1] == d[2]
+        and
+        d[0] != d[1]
+    ):
+        return "💎 ULTRA VIP — ABBAABBA"
+
+    if d == d[::-1]:
+        return "💎 ULTRA VIP — PALINDROME"
+
+    # 🔥 SUPER VIP
+    if (
+        d[0] == d[1] == d[2] == d[3]
+        and
+        d[4] == d[5] == d[6] == d[7]
+        and
+        d[0] != d[4]
+    ):
+        return "🔥 SUPER VIP — AAAABBBB"
+
+    if (
+        d[0] == d[1]
+        and d[2] == d[3]
+        and d[4] == d[5]
+        and d[6] == d[7]
+        and len({
+            d[0], d[2], d[4], d[6]
+        }) >= 3
+    ):
+        return "🔥 SUPER VIP — AABBCCDD"
+
+    if (
+        d[0] == d[1] == d[2] == d[3]
+        and
+        len(set(d[4:])) > 1
+    ):
+        return "🔥 SUPER VIP — AAAAxxxx"
+
+    if (
+        d[4] == d[5] == d[6] == d[7]
+        and
+        len(set(d[:4])) > 1
+    ):
+        return "🔥 SUPER VIP — xxxxAAAA"
+
+    # ⭐ VIP
+    if (
+        d[0] == d[1] == d[2] == d[3] == d[4]
+        and
+        len(set(d[5:])) > 1
+    ):
+        return "⭐ VIP — AAAAAxxx"
+
+    if (
+        d[3] == d[4] == d[5] == d[6] == d[7]
+        and
+        len(set(d[:3])) > 1
+    ):
+        return "⭐ VIP — xxxAAAAA"
+
+    if (
+        d[0] == d[1]
+        and
+        d[2] == d[3]
+        and
+        d[4] == d[5]
+        and
+        d[6] == d[7]
+        and
+        d[0] != d[2]
+        and
+        d[2] != d[4]
+        and
+        d[4] != d[6]
+    ):
+        return "⭐ VIP — AABBAABB"
+
     return None
 
 
@@ -671,7 +798,6 @@ def home():
 
 def run_smart_monitor():
     print('🔥🔥🔥 [THREAD ACTIVE] محرك الفحص بدأ', flush=True)
-    # Do not override PLAYWRIGHT_BROWSERS_PATH here. It is fixed to /ms-playwright above.
     current_proxies = []
     proxy_refresh_time = 0
     while True:
@@ -693,7 +819,7 @@ def run_smart_monitor():
                 }
                 if proxy:
                     launch_args['proxy'] = {'server': proxy}
-                # Verify the exact Chromium binary before launch.
+                
                 chromium_path = p.chromium.executable_path
                 print(
                     f'🔎 [PLAYWRIGHT] browsers_path={os.environ.get("PLAYWRIGHT_BROWSERS_PATH")} '
