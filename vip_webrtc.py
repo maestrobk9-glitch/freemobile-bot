@@ -53,7 +53,7 @@ def fetch_fresh_proxies():
 
 
 # ======================================================
-# 💎 STRICT VIP FILTER (دالة الفلتر الصارمة والنهائية)
+# 💎 STRICT-MODERATE VIP FILTER (دالة الفلتر المعتدلة والمنسقة)
 # ======================================================
 
 def evaluate_vip_expanded(num):
@@ -78,12 +78,9 @@ def evaluate_vip_expanded(num):
     # ======================================================
     # 💎 ULTRA VIP (أرقام خارقة ونادرة جداً)
     # ======================================================
-
-    # 1. تكرار كامل: AAAAAAAA
     if len(set(d)) == 1:
         return "💎 ULTRA VIP — تكرار كامل (AAAAHHHH)"
 
-    # 2. تبديل ثنائي متطابق: ABABABAB
     if (
         d[0] == d[2] == d[4] == d[6]
         and
@@ -93,11 +90,9 @@ def evaluate_vip_expanded(num):
     ):
         return "💎 ULTRA VIP — متناوب مزدوج (ABABABAB)"
 
-    # 3. مقطعين متطابقين تماماً: ABCDABCD (تكرار النصفين تماماً)
     if d[:4] == d[4:]:
         return "💎 ULTRA VIP — نصفين متطابقين (ABCDABCD)"
 
-    # 4. نمط مرآة مزدوج: ABBAABBA
     if (
         d[0] == d[3]
         and d[1] == d[2]
@@ -108,22 +103,14 @@ def evaluate_vip_expanded(num):
         return "💎 ULTRA VIP — نمط مرآة (ABBAABBA)"
 
     # ======================================================
-    # 🔥 VERY VIP (أرقام مميزة جداً وقوية)
+    # 🔥 VERY VIP (أرقام مميزة قوية)
     # ======================================================
-
-    # 1. خمسة أرقام متطابقة في البداية: AAAAAxxx
     if d[0] == d[1] == d[2] == d[3] == d[4]:
         return "🔥 VERY VIP — خماسي في البداية"
 
-    # 2. خمسة أرقام متطابقة في النهاية: xxxAAAAA
     if d[3] == d[4] == d[5] == d[6] == d[7]:
         return "🔥 VERY VIP — خماسي في النهاية"
 
-    # ======================================================
-    # ⭐ VIP (أرقام مميزة واضحة)
-    # ======================================================
-
-    # 1. أربع أرقام يتبعها أربع أرقام مختلفة: AAAABBBB
     if (
         d[0] == d[1] == d[2] == d[3]
         and
@@ -131,18 +118,30 @@ def evaluate_vip_expanded(num):
         and
         d[0] != d[4]
     ):
-        return "⭐ VIP — رباعي مزدوج (AAAABBBB)"
+        return "🔥 VERY VIP — رباعي مزدوج (AAAABBBB)"
 
-    # 2. أزواج متتالية رباعية: AABBAABB
+    # ======================================================
+    # ⭐ VIP (أرقام جميلة ومرتبة بمعتدل)
+    # ======================================================
+
+    # 1. تكرار رباعي متصل في أي مكان (مثل: xxxxAAAAxx)
+    for i in range(5):
+        sub = d[i:i+4]
+        if len(set(sub)) == 1:
+            return "⭐ VIP — تكرار رباعي متصل"
+
+    # 2. أزواج رباعية مزدوجة متتالية (مثل: AABBCCDD)
     if (
         d[0] == d[1]
         and d[2] == d[3]
         and d[4] == d[5]
         and d[6] == d[7]
-        and d[0] != d[2]
-        and d[2] != d[4]
     ):
-        return "⭐ VIP — أزواج متتالية (AABBAABB)"
+        return "⭐ VIP — أزواج رباعية مزدوجة (AABBCCDD)"
+
+    # 3. ثلاثي متكرر طرفي (مثل: AAAxxAAA)
+    if d[0] == d[1] == d[2] and d[5] == d[6] == d[7]:
+        return "⭐ VIP — ثلاثي متكرر طرفي (AAAxxAAA)"
 
     return None
 
@@ -207,7 +206,7 @@ def telegram_api(method, payload):
 
 
 def send_telegram_alert(number, desc, remote_url):
-    message = f'🔥 *رقم مميز VIP حقيقي جديد!*\n\n📱 الرقم: `{number}`\n💎 التصنيف: {desc}\n\nاضغط لفتح 🖥️ Remote Browser.'
+    message = f'🔥 *رقم مميز VIP جديد!*\n\n📱 الرقم: `{number}`\n💎 التصنيف: {desc}\n\nاضغط لفتح 🖥️ Remote Browser.'
     keyboard = {
         "inline_keyboard": [
             [{"text": "🖥️ فتح Remote Browser", "url": remote_url}],
@@ -231,7 +230,7 @@ def home():
     <html>
         <head><title>Free Mobile VIP WebRTC</title></head>
         <body style="font-family:Arial;text-align:center;padding:30px;background:#111;color:#fff;">
-            <h2>🚀 Free Mobile VIP Bot (WebRTC + Strict Filter) يعمل بنجاح</h2>
+            <h2>🚀 Free Mobile VIP Bot (WebRTC + Moderate Filter) يعمل بنجاح</h2>
             <p>صفحة البث الحي نشطة وجاهزة.</p>
         </body>
     </html>
@@ -240,7 +239,7 @@ def home():
 
 def run_smart_monitor():
     global current_frame
-    print('🔥🔥🔥 [THREAD ACTIVE] محرك الفحص والويب سرتك الصارم بدأ', flush=True)
+    print('🔥🔥🔥 [THREAD ACTIVE] محرك الفحص والويب سرتك المعتدل بدأ', flush=True)
     current_proxies = []
     proxy_refresh_time = 0
     while True:
@@ -275,7 +274,6 @@ def run_smart_monitor():
                 time.sleep(0.5)
 
                 while True:
-                    # التقاط الشاشة للبث الحي
                     try:
                         screenshot_bytes = page.screenshot(type="jpeg", quality=60)
                         with frame_lock:
@@ -311,19 +309,17 @@ def run_smart_monitor():
                         print(f"🔥 VIP FOUND: {number} | {desc}", flush=True)
 
                     if vip_numbers:
-                        print(f"💎 تم العثور على {len(vip_numbers)} أرقام VIP حقيقية", flush=True)
+                        print(f"💎 تم العثور على {len(vip_numbers)} أرقام VIP مطابقة", flush=True)
                         target_vip = vip_numbers[0]
                         number = target_vip["number"]
                         desc = target_vip["desc"]
 
                         select_number(page, number)
-                        
-                        # توليد رابط البث الخاص بالمنصة
                         host_url = request.host_url if request else "https://your-app.onrender.com"
                         send_telegram_alert(number, desc, host_url)
                         reset_page(page)
                     else:
-                        print("🔍 لا يوجد VIP مطابق بالشروط الصارمة", flush=True)
+                        print("🔍 جاري فحص الأرقام...", flush=True)
 
                     time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
         except Exception as e:
@@ -343,7 +339,7 @@ def run_smart_monitor():
 
 
 if __name__ == '__main__':
-    print('🚀 [START] Free Mobile VIP Bot (WebRTC + Strict Filter)', flush=True)
+    print('🚀 [START] Free Mobile VIP Bot (WebRTC + Moderate Filter)', flush=True)
     threading.Thread(target=run_smart_monitor, daemon=True, name='vip-webrtc-monitor').start()
     port = int(os.environ.get('PORT', '5000'))
     app.run(host='0.0.0.0', port=port, threaded=True)
